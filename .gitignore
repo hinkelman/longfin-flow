@@ -48,3 +48,12 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Authors' code and data are fetched from Zenodo/Dryad (R/fetch_original.R), not redistributed
+original/
+
+# Regenerable outputs: rerun scratch space, model objects, checkpoints, logs
+output/original_run/
+output/sim_reps/
+output/*.rds
+output/*.log
