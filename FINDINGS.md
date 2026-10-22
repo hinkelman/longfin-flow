@@ -59,17 +59,19 @@ Things noticed while replicating:
 Full table: `output/sim_recovery_table.csv`. Below, "DLM/truth" is the mean DLM slope divided by the mean
 true β.
 
-| Scenario | b | Mean true β | MARSS C | DLM/truth | DLM flags change | Era MARSS flags change | DLM 95% CI coverage |
-|---|---|---|---|---|---|---|---|
-| Null | – | 0 | 0.000 | – | 2% | 20% | 2% |
-| Constant | 0.08 | 0.080 | 0.080 | 0.17 | 1% | 10% | 0% |
-| Constant | 0.24 | 0.240 | 0.240 | 0.28 | 1% | 17% | 0% |
-| Decline | 0.08 | 0.040 | 0.050 | 0.15 | 3% | 26% | 2% |
-| Decline | 0.24 | 0.120 | 0.150 | 0.24 | 19% | 92% | 6% |
-| Step 1987 | 0.08 | 0.014 | 0.023 | 0.22 | 6% | 47% | 5% |
-| Step 1987 | 0.24 | 0.041 | 0.072 | 0.38 | 21% | 99% | 16% |
-| Step 2002 | 0.08 | 0.043 | 0.059 | 0.16 | 4% | 32% | 2% |
-| Step 2002 | 0.24 | 0.129 | 0.172 | 0.26 | 25% | 100% | 11% |
+| Scenario | b | Mean true β | MARSS C | DLM/truth | DLM flags change | Era flags change (ΔAICc < −2) | Era flags change (calibrated) | DLM 95% CI coverage |
+|---|---|---|---|---|---|---|---|---|
+| Null | – | 0 | 0.000 | – | 2% | 20% | 5% | 2% |
+| Constant | 0.08 | 0.080 | 0.080 | 0.17 | 1% | 10% | 2% | 0% |
+| Constant | 0.24 | 0.240 | 0.240 | 0.28 | 1% | 17% | 4% | 0% |
+| Decline | 0.08 | 0.040 | 0.050 | 0.15 | 3% | 26% | 12% | 2% |
+| Decline | 0.24 | 0.120 | 0.150 | 0.24 | 19% | 92% | 79% | 6% |
+| Step 1987 | 0.08 | 0.014 | 0.023 | 0.22 | 6% | 47% | 26% | 5% |
+| Step 1987 | 0.24 | 0.041 | 0.072 | 0.38 | 21% | 99% | 97% | 16% |
+| Step 2002 | 0.08 | 0.043 | 0.059 | 0.16 | 4% | 32% | 16% | 2% |
+| Step 2002 | 0.24 | 0.129 | 0.172 | 0.26 | 25% | 100% | 100% | 11% |
+
+"Calibrated" uses ΔAICc < −7.45, the threshold that flags 5% of null replicates.
 
 Takeaways:
 
@@ -87,18 +89,34 @@ Takeaways:
    less and coverage is about 0.
 4. **The static MARSS C is reliable when the effect really is constant.** It is unbiased, and its CI
    covers the truth 91% of the time.
-   - When the effect changes, C is a **flow-weighted** average, not an average over years. Because the
-     big high-flow years were early (1982–83, 1986, 1995, 1998), C overweights the early effect. For
-     example, under a 2002 step C = 0.17, against a true average of 0.13.
+   - When the effect changes, C is a weighted average that favors **high-flow, well-sampled years**, not
+     an average over years. For example, under a 2002 step C = 0.17, against a true average of 0.13
+     (`R/05_followup_checks.R`, `output/followup_marss_weighting.csv`).
+   - **Flow:** weighting by squared flow fully explains the 1987 step (0.023 predicted vs 0.023
+     estimated). Two years carry about a third of that weight: 1983 (19%) and 2017 (13%).
+   - **Sampling:** it doesn't fully explain the decline or the 2002 step. Sampling thins out over time
+     (70% of station-years observed in 1980–86, 62% in 1987–2002, 42% after 2002), so recent years count
+     for less. Adding sampling to the weights closes most of the gap (e.g., 0.164 vs 0.172 for the
+     strong 2002 step), but this is an approximation, not an exact formula.
 5. **"MARSS and DLM disagree" doesn't diagnose non-stationarity.**
    - Sign agreement is 63% under the null and 69–100% when the truth changes. Disagreement mostly
      reflects weak signal plus DLM attenuation.
    - The paper's 50% (stated as 30%) agreement can't tell a constant relationship from a changing one.
-6. **A simple, pre-specified alternative works better.** The era MARSS correctly sorts out a step or
-   decline in 92–100% of fits at b = 0.24, and recovers era means closely (`sim_recovery_b024.png`).
-   - Caveats: power is only 26–47% at the realistic effect size, and the AICc < −2 rule gives 10–20%
-     false positives. With these data, a real shift of plausible size would often go undetected by any
-     method.
+6. **A simple, pre-specified alternative works better, but only with a calibrated threshold.** The era
+   MARSS recovers era means closely (`sim_recovery_b024.png`). The usual ΔAICc < −2 rule, however,
+   flags change in **20% of null replicates**.
+   - This is not an optimization artifact. Refitting the worst null replicates with a BFGS polish, and
+     starting the era model at the static solution, changes ΔAICc by < 0.05
+     (`output/followup_null_refits.csv`).
+   - The likelihood-ratio statistics really are too large for the textbook χ²₈ reference: 8 of 100
+     nulls exceed what χ²₈ puts at 0.4%. With 41 years of random-walk data the large-sample theory
+     doesn't hold. AICc's small-sample correction also uses the ~1,000 station-years as the sample size,
+     when the effective sample size is much smaller.
+   - With a threshold calibrated so 5% of nulls are flagged (ΔAICc < −7.45), the era model still
+     catches strong steps in 97–100% of fits and a strong decline in 79%
+     (`output/followup_era_calibrated_power.csv`).
+   - At the realistic effect size (b = 0.08), power is only 12–26%. With these data, a real shift of
+     plausible size would usually go undetected by any of these methods.
 
 ## 4. Caveats
 

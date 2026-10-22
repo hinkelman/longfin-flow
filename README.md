@@ -35,6 +35,7 @@ changes a file, the script flags the mismatch.
 | `R/sim_functions.R` | Data simulation and model-fitting functions |
 | `R/03_run_simulation.R` | Runs the simulation in parallel (checkpointed, resumable) |
 | `R/04_summarize_simulation.R` | Recovery tables and figures |
+| `R/05_followup_checks.R` | What static MARSS C averages over; era-model false positives and calibrated threshold |
 | `output/` | Result tables (`*.csv`) and figures (`figures/`); model objects and checkpoints are not tracked |
 
 ## Reproduce
@@ -48,6 +49,7 @@ Rscript R/01_replication_check.R
 Rscript R/02_sim_setup.R
 Rscript R/03_run_simulation.R 100 7
 Rscript R/04_summarize_simulation.R
+Rscript R/05_followup_checks.R
 ```
 
 The simulation (900 replicates) takes about 1.5 hours on 7 cores. Each replicate is seeded on its own
