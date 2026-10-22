@@ -72,12 +72,26 @@ cat("Expected share of nulls with LR >", round(min(refits$LR), 1), "under chi2_8
     signif(1 - pchisq(min(refits$LR), 8), 2), "; observed:", nrow(refits), "of", nrow(null_reps), "\n")
 
 # 2b. Null-calibrated threshold --------------------------------------------------------
-threshold <- unname(quantile(null_reps$dAICc_era, 0.05))
+# With beta = 0 the growth and level truths are the same process, so the null
+# replicates of the main and level_truth studies are 200 draws from one null
+# distribution. A 5th percentile from 100 draws alone is too noisy (-7.45 vs -3.21).
+level <- readRDS(file.path("output", "sim_results_level_truth.rds"))$summary
+null_level <- unique(level[level$scenario == "null", c("rep", "dAICc_era")])
+null_pooled <- c(null_reps$dAICc_era, null_level$dAICc_era)
+threshold <- unname(quantile(null_pooled, 0.05))
+set.seed(1)
+boot <- replicate(2000, quantile(sample(null_pooled, replace = TRUE), 0.05))
+threshold_ci <- unname(quantile(boot, c(0.05, 0.95)))
+
 power <- aggregate(dAICc_era ~ scenario + b, reps_dAICc,
                    function(x) c(naive = mean(x < -2), calibrated = mean(x < threshold)))
 power <- do.call(data.frame, power)
 names(power) <- c("scenario", "b", "flag_rate_dAICc_lt_minus2", "flag_rate_calibrated")
 power$calibrated_threshold <- threshold
+power$threshold_lo90 <- threshold_ci[1]
+power$threshold_hi90 <- threshold_ci[2]
 write.csv(power, file.path("output", "followup_era_calibrated_power.csv"), row.names = FALSE)
-cat("\nNull-calibrated threshold (5% false positives): dAICc <", round(threshold, 2), "\n")
-print(power, digits = 2)
+cat("\nNaive (dAICc < -2) false-positive rate, pooled nulls:", mean(null_pooled < -2), "\n")
+cat("Null-calibrated threshold (5% false positives, 200 pooled nulls): dAICc <", round(threshold, 2),
+    " bootstrap 90% interval", round(threshold_ci, 2), "\n")
+print(power[, 1:4], digits = 2)

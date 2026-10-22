@@ -33,9 +33,10 @@ changes a file, the script flags the mismatch.
 | `R/01_replication_check.R` | Compares rerun to published coefficients; DLM variance diagnostics |
 | `R/02_sim_setup.R` | Pulls the age-0 station layout, missing-data pattern, and fitted variances from the authors' pipeline |
 | `R/sim_functions.R` | Data simulation and model-fitting functions |
-| `R/03_run_simulation.R` | Runs the simulation in parallel (checkpointed, resumable) |
+| `R/03_run_simulation.R` | Runs a simulation study in parallel (checkpointed, resumable): `main`, `dlm_variants`, or `level_truth` |
 | `R/04_summarize_simulation.R` | Recovery tables and figures |
 | `R/05_followup_checks.R` | What static MARSS C averages over; era-model false positives and calibrated threshold |
+| `R/06_summarize_extensions.R` | Why the DLM shrinks the flow effect (DLM variants); results when the DLM's own model is the truth |
 | `output/` | Result tables (`*.csv`) and figures (`figures/`); model objects and checkpoints are not tracked |
 
 ## Reproduce
@@ -47,10 +48,16 @@ Rscript R/fetch_original.R
 for i in 1 2 3 4; do Rscript R/00_run_original.R $i; done
 Rscript R/01_replication_check.R
 Rscript R/02_sim_setup.R
-Rscript R/03_run_simulation.R 100 7
+Rscript R/03_run_simulation.R 100 7 main
 Rscript R/04_summarize_simulation.R
+Rscript R/03_run_simulation.R 100 7 dlm_variants
+Rscript R/03_run_simulation.R 100 7 level_truth
 Rscript R/05_followup_checks.R
+Rscript R/06_summarize_extensions.R
 ```
 
-The simulation (900 replicates) takes about 1.5 hours on 7 cores. Each replicate is seeded on its own
-and checkpointed to `output/sim_reps/`, so an interrupted run picks up where it stopped.
+Each study has 900 replicates. On 7 cores, `main` takes about 1.5 hours, `dlm_variants` about 1.7, and
+`level_truth` about 2.5. Each replicate is seeded on its own and checkpointed to
+`output/sim_reps/<study>/`, so an interrupted run picks up where it stopped. `dlm_variants` uses the same
+seeds as `main`, so both studies fit models to identical simulated data. `05_followup_checks.R` pools the
+null replicates of `main` and `level_truth`, so it runs after both.

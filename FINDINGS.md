@@ -61,17 +61,18 @@ true β.
 
 | Scenario | b | Mean true β | MARSS C | DLM/truth | DLM flags change | Era flags change (ΔAICc < −2) | Era flags change (calibrated) | DLM 95% CI coverage |
 |---|---|---|---|---|---|---|---|---|
-| Null | – | 0 | 0.000 | – | 2% | 20% | 5% | 2% |
+| Null | – | 0 | 0.000 | – | 2% | 20% | 7% | 2% |
 | Constant | 0.08 | 0.080 | 0.080 | 0.17 | 1% | 10% | 2% | 0% |
-| Constant | 0.24 | 0.240 | 0.240 | 0.28 | 1% | 17% | 4% | 0% |
-| Decline | 0.08 | 0.040 | 0.050 | 0.15 | 3% | 26% | 12% | 2% |
-| Decline | 0.24 | 0.120 | 0.150 | 0.24 | 19% | 92% | 79% | 6% |
-| Step 1987 | 0.08 | 0.014 | 0.023 | 0.22 | 6% | 47% | 26% | 5% |
-| Step 1987 | 0.24 | 0.041 | 0.072 | 0.38 | 21% | 99% | 97% | 16% |
-| Step 2002 | 0.08 | 0.043 | 0.059 | 0.16 | 4% | 32% | 16% | 2% |
+| Constant | 0.24 | 0.240 | 0.240 | 0.28 | 1% | 17% | 5% | 0% |
+| Decline | 0.08 | 0.040 | 0.050 | 0.15 | 3% | 26% | 15% | 2% |
+| Decline | 0.24 | 0.120 | 0.150 | 0.24 | 19% | 92% | 81% | 6% |
+| Step 1987 | 0.08 | 0.014 | 0.023 | 0.22 | 6% | 47% | 30% | 5% |
+| Step 1987 | 0.24 | 0.041 | 0.072 | 0.38 | 21% | 99% | 98% | 16% |
+| Step 2002 | 0.08 | 0.043 | 0.059 | 0.16 | 4% | 32% | 19% | 2% |
 | Step 2002 | 0.24 | 0.129 | 0.172 | 0.26 | 25% | 100% | 100% | 11% |
 
-"Calibrated" uses ΔAICc < −7.45, the threshold that flags 5% of null replicates.
+"Calibrated" uses ΔAICc < −6.37, the threshold that flags 5% of 200 null replicates pooled across the
+main and level-truth studies (the null is the same process under both truths).
 
 Takeaways:
 
@@ -82,8 +83,9 @@ Takeaways:
    - In real data, flat, weak DLM slopes (9 of 12 in the paper) are therefore not evidence that the
      relationship is stable.
 2. **The paper's DLM shrinks flow effects toward zero by 60–85%.** It recovers only 15–38% of the true
-   average effect, because the random-walk intercept absorbs most of the flow signal. So "weak"
-   DLM slopes partly reflect how the model is built.
+   average effect. Section 4 traces this to two modeling choices (fitting smoothed states, and
+   regressing the level rather than growth on flow), not the random-walk intercept. So "weak" DLM
+   slopes partly reflect how the model is built.
 3. **The DLM's confidence intervals are badly overconfident.** Nominal 95% intervals cover the true β in
    0–16% of years (`sim_dlm_coverage.png`). When the slope collapses to static, the SE drops to 1e-6 or
    less and coverage is about 0.
@@ -112,16 +114,96 @@ Takeaways:
      nulls exceed what χ²₈ puts at 0.4%. With 41 years of random-walk data the large-sample theory
      doesn't hold. AICc's small-sample correction also uses the ~1,000 station-years as the sample size,
      when the effective sample size is much smaller.
-   - With a threshold calibrated so 5% of nulls are flagged (ΔAICc < −7.45), the era model still
-     catches strong steps in 97–100% of fits and a strong decline in 79%
+   - The fix is to calibrate the threshold on simulated nulls. Pooling 200 null replicates gives
+     ΔAICc < −6.37 for a 5% false-positive rate. The threshold is itself uncertain: its bootstrap 90%
+     interval is −7.6 to −4.4, and 100 nulls per study gave −7.45 and −3.21
      (`output/followup_era_calibrated_power.csv`).
-   - At the realistic effect size (b = 0.08), power is only 12–26%. With these data, a real shift of
+   - At that threshold the era model still catches strong steps in 98–100% of fits and a strong
+     decline in 81%.
+   - At the realistic effect size (b = 0.08), power is only 15–30%. With these data, a real shift of
      plausible size would usually go undetected by any of these methods.
 
-## 4. Caveats
+## 4. Why the paper's DLM shrinks the flow effect
 
-- The simulation uses the paper's model structure as truth: a random-walk state with flow in the process
-  equation. A DLM-style truth, where flow drives the level, would favor the DLM.
+`R/03_run_simulation.R ... dlm_variants` refits the same simulated data (same seeds as the main study),
+changing one modeling choice at a time. Variants B–D use the simulated true states, which are never
+observed in practice; they are diagnostics. Variant A reproduces the main study's DLM slopes exactly.
+Tables: `output/ext_dlm_variants.csv`; figures: `ext_dlm_variants_b024.png`,
+`ext_dlm_variants_ratio.png`.
+
+| Variant | Change from the previous row | Share of true effect recovered | Flags change, strong decline/steps (b = 0.24) | Flags change, null |
+|---|---|---|---|---|
+| A. Paper DLM | – (smoothed stage-1 states, level ~ flow, random-walk intercept) | 0.15–0.43 | 19–25% | 2% |
+| B. True states | Fit the true states instead of the smoothed ones | 0.50–0.88 | 51–72% | 11% |
+| C. Growth | Regress the year-to-year change, not the level, on flow | 1.0–1.5 | 97–100% | 12% |
+| D. No intercept | Drop the random-walk intercept | 1.0–1.5 | 97–100% | 13% |
+| E. One-stage MARSS | Time-varying flow effect in the MARSS process equation, fit to station data (usable in practice) | 1.0–1.5 | 72–89% | 16% |
+
+Takeaways:
+
+1. **Two choices each cut the effect roughly in half, so the DLM recovers about a quarter of it.**
+   - **Smoothed states:** the stage-1 states come from a model without flow, so smoothing removes part
+     of the flow signal before the DLM sees it (A → B).
+   - **Level vs growth:** when flow drives growth, regressing the *level* on flow halves the slope
+     again (B → C).
+   - **The random-walk intercept doesn't matter:** C and D are essentially identical. (I had guessed it
+     did; it doesn't.)
+2. **A one-stage model with a time-varying flow effect in the process equation fixes most of it.**
+   Variant E is fit to the station data, like the paper's MARSS, and recovers the full effect and its
+   trajectory (`ext_dlm_variants_b024.png`). It flags strong changes in 72–89% of fits, versus 19–25%
+   for the paper's DLM. Ratios above 1 for the 1987 step reflect the same flow weighting as the static C
+   (section 3).
+3. **Even correctly specified, the slope-variance test flags change in 12–16% of null fits.**
+   "q_slope > 0" is not a calibrated test, just like ΔAICc < −2 for the era model.
+4. **Overconfident intervals are a MARSS state-SE issue, not just the paper's.** Even variants C–E cover
+   the true effect in only 9–13% of years when the true effect is constant. When the slope variance
+   collapses to 0, the slope becomes a constant whose SE comes from treating x0 as known.
+   Constant-effect intervals need the parameter SE (e.g., `MARSSparamCIs`) instead.
+
+## 5. When the DLM's own model is the truth
+
+`R/03_run_simulation.R ... level_truth` repeats the whole design with the DLM's structure as the truth.
+Log CPUE is a random walk plus β_t·flow_t, so flow shifts the *level*, not the growth. Same variances,
+stations, and missing-data pattern; new seeds. Tables: `output/ext_level_truth.csv`,
+`output/ext_level_truth_variants.csv`; figure: `ext_level_truth_variants_b024.png`.
+
+| Method | Share of true effect recovered | Flags change, strong decline/steps (b = 0.24) | Flags change, realistic (b = 0.08) | Flags change, null |
+|---|---|---|---|---|
+| Static MARSS C (paper) | 0.50–0.69 (constant) | – | – | – |
+| Paper DLM (A) | 0.30–0.80 | 91–98% | 12–19% | 3% |
+| Era MARSS, calibrated | – | 3–42% | 3–9% | 3% |
+| DLM on true states (B, diagnostic) | 1.0 (1.5–1.9 for the 1987 step) | 99–100% | 50–69% | 10% |
+| One-stage MARSS, time-varying C (E) | 0.50–0.70 (1.1–1.3 for the 1987 step) | 19–42% | 12–18% | 8% |
+
+Takeaways:
+
+1. **The results flip: each method does best when its structural assumption is right.**
+   - **Level truth:** the paper's DLM now detects strong changes in 91–98% of fits. The growth-based
+     methods (static C, era MARSS, one-stage E) lose most of their power and recover only half to
+     two-thirds of the effect.
+   - **Growth truth (sections 3–4):** the reverse.
+   - Whether flow acts on the *level* or the *growth* of log CPUE matters as much as static vs
+     time-varying. The paper's MARSS and DLM make opposite assumptions, so their disagreement on real
+     data partly reflects that structural difference.
+2. **Even under its own model, the paper's DLM loses 20–70% of the effect to the two-stage design.**
+   The same DLM fit to the true states (B) recovers the full effect; fit to the smoothed stage-1 states
+   (A) it does not. The stage-1 MARSS has no flow term, so its smoothing treats flow-driven jumps as
+   noise.
+3. **Its intervals are still overconfident.** Pointwise coverage of the paper's DLM is 2–68%, and only
+   2–12% at the realistic effect size.
+4. **At the realistic effect size, detection is weak whichever structure is true.** The best usable
+   method flags real changes in under a fifth of fits at b = 0.08.
+
+**Implication for the real data:** the level-vs-growth question can be tested directly. Fit the static
+flow effect both ways to the station data: in the process equation (C, as the paper did) and as a
+covariate on the observations (the D matrix in MARSS). Then compare AICc. Not done here; it is a natural
+next step.
+
+## 6. Caveats
+
+- Both truths are idealized. Real flow effects could act on both level and growth, lag across years,
+  or differ by habitat.
 - Era breakpoints are given to the era model, not estimated, so it is an "oracle" for the step scenarios.
+- Calibrated thresholds come from 200 simulated nulls and carry their own uncertainty (section 3).
 - The EM algorithm hit its iteration limit in 4% of era fits and 0.3% of static C fits. Those fits are
   included as estimated.
