@@ -23,7 +23,7 @@ format:
 Saffarinia et al. (2026, *Ecological Applications*) asked whether the effect of Delta outflow on
 Longfin Smelt has changed over time.
 
-- **Data:** CDFW Bay Study trawls, 1980–2020; age-0 and age-1+ CPUE at 25 stations
+- **Data:** CDFW Bay Study trawls, 1980–2020; age-0 and age-1+ CPUE at 24 stations (the paper says 25)
 - **Two models:**
   - **MARSS** — one *time-averaged* flow effect per habitat
   - **DLM** — a flow effect that can *drift* year to year
@@ -94,7 +94,7 @@ longfin-flow/
 
 ::: {.notes}
 Numbered scripts run in order. Everything the summary scripts need is committed, so the tables and
-figures rebuild in minutes; the simulations themselves take about 9.5 hours on 7 cores.
+figures rebuild in minutes; the simulations themselves take about 8.6 hours on 7 cores.
 :::
 
 # Part 1: Reproducibility
@@ -148,15 +148,15 @@ jobs should never write to shared paths. Also: check the source before blaming i
 |---|---|
 | MARSS flow coefficients (12) | identical (max diff 1e-11) |
 | DLM time-averaged slopes (12) | match to 3–4 significant digits |
-| AICc table | same ranking; absolute values differ |
+| AICc table | age-1+: same ranking, lower values (239.8 vs 248.8); age-0: 732.6 vs 803.3 |
 
 . . .
 
 Things that surfaced while replicating:
 
-- MARSS and DLM agree in sign for **6 of 12** cases (50%), not "about 30%"
+- In the published coefficient file, MARSS and DLM agree in sign for **6 of 12** cases (50%), not "about 30%"
 - DLM observation variance $R \approx 0$ in every model
-- 9 of 12 DLM slopes have process variance $\approx 10^{-14}$: they're constants, with SEs of $10^{-7}$–$10^{-5}$
+- 9 of 12 DLM slopes have process variance $10^{-16}$–$10^{-11}$: they're constants, with SEs of $10^{-7}$–$10^{-5}$
 
 ::: {.notes}
 The code reproduces. The tiny SEs are the first red flag: when a slope's random-walk variance collapses
@@ -171,7 +171,7 @@ groups are a numerical artifact.
 :::: {.columns}
 ::: {.column width="45%"}
 - **Truth:** random-walk log CPUE with flow effect $\beta_t$ on the real z-scored Jan–Jun outflow
-- **Observations:** the real 48 station × gear series, missing-data pattern, and fitted variances
+- **Observations:** the real 48 station × gear series (24 stations), missing-data pattern, and fitted variances
 - **Scenarios** for $\beta_t$: null, constant, linear decline, step at 1987, step at 2002
 - **Effect size** $b$ = 0.08 (realistic) or 0.24 (strong)
 - 100 replicates × 9 cells × 4 habitats
@@ -217,7 +217,7 @@ run_replicate <- function(setup, scenario, b, rep_id, truth = "growth", main = T
 
 - One function per replicate; **studies** are just flag combinations
 - Studies on the same truth share seeds → they fit models to **identical** data
-- All slope fits are scored by one function, `score_slope_fits()`
+- Variant and check slope fits are all scored by one function, `score_slope_fits()`
 
 ::: {.notes}
 This structure is what made the follow-up studies cheap to add: a new question is a new fit_* function
@@ -241,7 +241,7 @@ invisible(future_lapply(todo, function(i) {
 - **Per-replicate seeds** (`grid_seed()`): results don't depend on scheduling or restarts
 - **Checkpoints:** a rerun skips finished replicates; failures are recorded, not fatal
 - **`future.chunk.size = 1`:** slow replicates don't block a whole chunk
-- Compact CSVs in `output/results/` → summaries rebuild without the 9.5 h of compute
+- Compact CSVs in `output/results/` → summaries rebuild without the 8.6 h of compute
 
 ::: {.notes}
 My first run used default chunking with no progress log, sat for over 90 minutes with no visibility,
@@ -264,7 +264,7 @@ DLM. Even with a strong decline from 0.24 to 0, the DLM's slope is nearly flat a
 ![](../output/figures/sim_detection.png){fig-align="center" height="400px"}
 
 - DLM "time-varying" (slope variance > 0): ≤ 25% even for strong changes; **1–6%** at realistic size
-- Era model at the naive ΔAICc < −2: catches strong changes, but **20% false positives** under the null
+- Era model at the naive ΔAICc < −2: catches strong changes, but **15% false positives** under the null (200 pooled nulls)
 
 ::: {.notes}
 The era false-positive rate turned out to be real, not an optimization artifact. Calibrating on 200
@@ -279,7 +279,7 @@ simulated nulls gives a threshold of ΔAICc < −6.37 (bootstrap 90% interval �
 :::
 ::: {.column width="45%"}
 - Nominal 95% intervals cover the truth in **0–16%** of years
-- When the slope collapses to static, SE drops below $10^{-6}$
+- When the slope collapses to static, SE drops to about $10^{-6}$ (median)
 - MARSS treats estimated x0 as **known** when reporting state SEs
 :::
 ::::
@@ -318,13 +318,14 @@ too, which closes most of the gap. It's a good approximation, not an exact formu
 | D. No intercept | drop the random-walk intercept | 1.0–1.5 |
 | E. One-stage MARSS | time-varying C, fit to station data | 1.0–1.5 |
 
-- **Two choices each halve the effect:** fitting smoothed states, and level-vs-growth
+- **Two choices each cut the effect by about half or more:** fitting smoothed states, and level-vs-growth
 - The random-walk intercept doesn't matter (C ≈ D) — my initial guess was wrong
 - B–D use the simulated true states: diagnostics only. **E is usable in practice.**
 
 ::: {.notes}
 Same simulated data for every variant (shared seeds), and variant A reproduces the main study's DLM
-slopes exactly, so the differences are purely the modeling choice. Ratios above 1 for the 1987 step are
+slopes exactly, so the differences are purely the modeling choice. (A's ratios run to 0.43 here, vs 0.38 in the
+main study, because the variants are scored on 1981–2020.) Ratios above 1 for the 1987 step are
 the same flow weighting as the static C.
 :::
 
@@ -345,7 +346,7 @@ The results flip. Each method works best when its structural assumption matches 
 question for the real data becomes: does flow act on the level or the growth of log CPUE?
 :::
 
-# Part 5: Asking the real data
+# Part 5: Checking the alternatives, then asking the real data
 
 ## Can AICc tell growth from level? {.smaller}
 
@@ -355,7 +356,8 @@ Constant realistic effect: AICc picks the true structure in **99%** of replicate
 
 ::: {.notes}
 Both forms have the same number of parameters, so this is a straight likelihood comparison. With no flow
-effect at all it picks either about as often, which is the right behavior.
+effect, one form still beats the other by more than 2 units in about 65% of replicates; that gap is noise, so
+first check that a flow model beats the no-flow model.
 :::
 
 ## Fixing the intervals: a prior on x0 {.smaller}
@@ -372,7 +374,7 @@ model$x0 <- matrix(x0_mean, ncol = 1)
 model$V0 <- diag(prior_var, 2 * k)
 ```
 
-- Coverage: **9–76% → 82–96%**
+- Coverage: **9–84% → 82–96%**
 - Point estimates barely move
 - Doesn't rescue the paper's DLM: its problem is bias
 :::
@@ -395,7 +397,7 @@ comparison like the era test.
 | Time-varying, level | 1.7 | **0** |
 
 - **Age-0:** flow acts on the **level** (ΔAICc 35.6); the growth form is no better than no flow at all
-- Level effects positive in all four habitats: 0.05–0.11 per SD of outflow (~5–11% more CPUE)
+- Level effects positive in all four habitats (clearly so in three): 0.05–0.11 per SD of outflow (~5–11% more CPUE)
 - **No evidence of change:** era level is 5 units *worse* than static (calibrated threshold −1.61)
 - **Age-1+:** all models within 6.6 units — can't tell
 
@@ -409,8 +411,9 @@ The calibrated era threshold in the level form comes from the structure-check si
 ![](../output/figures/real_data_tv_slopes.png){fig-align="center" height="540px"}
 
 ::: {.notes}
-Orange (level) slopes in age-0 drift gently downward in the shoals — the paper's "weakening" — but the
-95% bands overlap a constant line throughout, consistent with AICc preferring the static model.
+Orange (level) slopes in age-0 decline in all four habitats, including the midwater habitats where the paper
+reports weakening. Three decline gently, and their 95% bands allow a constant effect. Channel otter trawl swings
+widely, and no constant line fits inside its band. Overall, AICc still prefers the static model.
 :::
 
 ## Takeaways {.smaller}
@@ -423,7 +426,7 @@ Orange (level) slopes in age-0 drift gently downward in the shoals — the paper
 
 **Longfin Smelt**
 
-- Age-0: a clear, positive flow effect in all habitats, with no detectable change since 1980
+- Age-0: a positive flow effect in all habitats (clearly so in three), with no detectable change since 1980
 
 **Code**
 
@@ -433,7 +436,7 @@ Orange (level) slopes in age-0 drift gently downward in the shoals — the paper
 
 ::: {.notes}
 Caveats worth saying out loud: both simulated truths are idealized; era breakpoints are given to the era
-model; calibrated thresholds have their own uncertainty; the age-1+ lagged-flow analysis wasn't refit.
+model; calibrated thresholds have their own uncertainty and come from the age-0 setup; the age-1+ lagged-flow analysis wasn't refit.
 :::
 
 ## Thanks {.smaller}

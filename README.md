@@ -72,7 +72,7 @@ Rscript R/07_real_data.R
 Rscript R/08_summarize_checks.R
 ```
 
-To rerun the simulations themselves (about 9.5 hours on 7 cores), run the studies before the summary
+To rerun the simulations themselves (about 8.6 hours on 7 cores), run the studies before the summary
 scripts:
 
 ```bash
