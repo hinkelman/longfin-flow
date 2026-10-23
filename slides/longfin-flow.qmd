@@ -271,7 +271,7 @@ The era false-positive rate turned out to be real, not an optimization artifact.
 simulated nulls gives a threshold of ΔAICc < −6.37 (bootstrap 90% interval −7.6 to −4.4).
 :::
 
-## Are the DLM intervals honest?
+## Are the DLM intervals honest? {.smaller}
 
 :::: {.columns}
 ::: {.column width="55%"}
