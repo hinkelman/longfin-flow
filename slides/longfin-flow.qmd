@@ -264,7 +264,7 @@ DLM. Even with a strong decline from 0.24 to 0, the DLM's slope is nearly flat a
 ![](../output/figures/sim_detection.png){fig-align="center" height="400px"}
 
 - DLM "time-varying" (slope variance > 0): ≤ 25% even for strong changes; **1–6%** at realistic size
-- Era model at the naive ΔAICc < −2: catches strong changes, but **15% false positives** under the null (200 pooled nulls)
+- Era model at the naive ΔAICc < −2: catches strong changes, but **20% false positives** under the null (15% across all 200 nulls)
 
 ::: {.notes}
 The era false-positive rate turned out to be real, not an optimization artifact. Calibrating on 200
@@ -346,7 +346,7 @@ The results flip. Each method works best when its structural assumption matches 
 question for the real data becomes: does flow act on the level or the growth of log CPUE?
 :::
 
-# Part 5: Checking the alternatives, then asking the real data
+# Part 5: Better tools, then the real data
 
 ## Can AICc tell growth from level? {.smaller}
 
