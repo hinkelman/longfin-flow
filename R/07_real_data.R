@@ -7,44 +7,31 @@
 #   time-varying   random-walk flow effect, as growth or level (one-stage models)
 # Time-varying models are fit twice: with x0 estimated (likelihood comparable with
 # the other models, used for AICc) and with a prior on x0 (used for intervals).
-# Run after R/00_run_original.R 1 and R/02_sim_setup.R.
+# Run after R/02_sim_setup.R.
 
-suppressMessages({
-  library(dplyr)
-  library(ggplot2)
-})
 source("R/sim_functions.R")
+source("R/plot_helpers.R")
 
-age0 <- readRDS(file.path("output", "sim_setup.rds"))
-# script 1 ends with the age-1+ section, so its saved environment holds age-1+ objects
-e1 <- readRDS(file.path("output", "original_run", "script1", "env.rds"))
-age1 <- list(years = age0$years, flow_z = age0$flow_z, y_obs = e1$MWT_OT_matrix2,
-             Z = e1$Z6, R_model = e1$R.model, gear = e1$z_matrix$Gear,
-             x0 = setNames(coef(e1$z6)$x0[, 1], rownames(e1$z6$states)))
-setups <- list(`age-0` = age0, `age-1+` = age1)
+setups <- readRDS(file.path("output", "setups.rds"))
+setups <- list(`age-0` = setups$age0, `age-1+` = setups$age1)
 
-state_labels <- c(`1 MWT` = "Channel, midwater", `1 OT` = "Channel, otter trawl",
+STATE_LABELS <- c(`1 MWT` = "Channel, midwater", `1 OT` = "Channel, otter trawl",
                   `2 MWT` = "Shoal, midwater", `2 OT` = "Shoal, otter trawl")
 
 fit_age <- function(setup) {
   y <- setup$y_obs
   k <- length(setup$x0)
   s1 <- fit_stage1(y, setup)
-  s1_inits <- list(Q = pmax(coef(s1)$Q, 1e-4), R = coef(s1)$R, x0 = coef(s1)$x0)
-  refit <- function(f, form) {
-    fit <- f(y, setup, inits = s1_inits, form = form)
-    if (is.null(fit$par)) fit <- f(y, setup, form = form)
-    fit
-  }
   x0_mean <- c(coef(s1)$x0[, 1], rep(0, k))
+  tv_inits <- list(x0 = matrix(x0_mean, ncol = 1))
   list(
     none = s1,
-    static_growth = refit(fit_marss_c, "growth"),
-    static_level = refit(fit_marss_c, "level"),
-    era_growth = refit(fit_marss_era, "growth"),
-    era_level = refit(fit_marss_era, "level"),
-    tv_growth = fit_tv_marss(y, setup, inits = list(x0 = matrix(x0_mean, ncol = 1)), form = "growth"),
-    tv_level = fit_tv_marss(y, setup, inits = list(x0 = matrix(x0_mean, ncol = 1)), form = "level"),
+    static_growth = fit_from_stage1(fit_static_flow, y, setup, s1, "growth"),
+    static_level = fit_from_stage1(fit_static_flow, y, setup, s1, "level"),
+    era_growth = fit_from_stage1(fit_era_flow, y, setup, s1, "growth"),
+    era_level = fit_from_stage1(fit_era_flow, y, setup, s1, "level"),
+    tv_growth = fit_tv_marss(y, setup, inits = tv_inits, form = "growth"),
+    tv_level = fit_tv_marss(y, setup, inits = tv_inits, form = "level"),
     tv_growth_prior = fit_tv_marss(y, setup, form = "growth", prior_var = 1, x0_mean = x0_mean),
     tv_level_prior = fit_tv_marss(y, setup, form = "level", prior_var = 1, x0_mean = x0_mean)
   )
@@ -70,18 +57,13 @@ print(as.data.frame(comparison), digits = 4, row.names = FALSE)
 
 # Static and era flow effects -----------------------------------------------------------
 effects <- bind_rows(lapply(names(fits), function(age) {
-  setup <- setups[[age]]
   bind_rows(lapply(c("static_growth", "static_level", "era_growth", "era_level"), function(m) {
     form <- sub(".*_", "", m)
-    prefix <- if (form == "growth") "C." else "D."
-    est <- flow_coefs(fits[[age]][[m]], setup, form)
-    ct <- coef_table(fits[[age]][[m]], prefix)
-    covs <- if (ncol(est) == 1) "all years" else c("1980-86", "1987-2002", "2003-20")
-    terms <- if (ncol(est) == 1) paste0(prefix, rownames(est)) else
-      paste0(prefix, rep(rownames(est), 3), " ", rep(c("pre1987", "1987_2002", "post2002"), each = 4))
-    data.frame(age = age, model = m, state = rep(rownames(est), ncol(est)),
-               period = rep(covs, each = nrow(est)), estimate = as.vector(est),
-               se = if (is.null(ct)) NA else ct$std.error[match(terms, ct$term)])
+    flow_coef_table(fits[[age]][[m]], setups[[age]], form) |>
+      mutate(age = age, model = m,
+             period = ifelse(covariate == "flow", "all years", ERA_LABELS[covariate]),
+             .before = 1) |>
+      select(age, model, state, period, estimate, se)
   }))
 })) |>
   mutate(lo95 = estimate - 1.96 * se, hi95 = estimate + 1.96 * se)
@@ -94,11 +76,11 @@ tv <- bind_rows(lapply(names(fits), function(age) {
   bind_rows(lapply(c("growth", "level"), function(form) {
     f <- fits[[age]][[paste0("tv_", form, "_prior")]]
     p <- tv_slopes(f, setups[[age]], form)
-    q <- coef(f)$Q[, 1]
-    data.frame(age = age, form = form, state = rep(rownames(p$slope), ncol(p$slope)),
-               year = rep(setups[[age]]$years, each = nrow(p$slope)),
+    states <- rownames(p$slope)
+    data.frame(age = age, form = form, state = rep(states, ncol(p$slope)),
+               year = rep(setups[[age]]$years, each = length(states)),
                slope = as.vector(p$slope), se = as.vector(p$se),
-               q_slope = rep(q[paste0("q_slo_", rownames(p$slope))], ncol(p$slope)))
+               q_slope = rep(coef(f)$Q[paste0("q_slo_", states), 1], ncol(p$slope)))
   }))
 }))
 write.csv(tv, file.path("output", "real_data_tv_slopes.csv"), row.names = FALSE)
@@ -107,7 +89,7 @@ print(as.data.frame(distinct(tv, age, form, state, q_slope)), digits = 3, row.na
 
 p_tv <- tv |>
   filter(!is.na(slope)) |>
-  mutate(state = factor(state_labels[state], state_labels),
+  mutate(state = factor(STATE_LABELS[state], STATE_LABELS),
          form = ifelse(form == "growth", "Flow drives growth (process eq.)",
                        "Flow drives level (observation eq.)")) |>
   ggplot(aes(year, slope, colour = form, fill = form)) +
@@ -115,12 +97,12 @@ p_tv <- tv |>
   geom_ribbon(aes(ymin = slope - 1.96 * se, ymax = slope + 1.96 * se), alpha = 0.15, colour = NA) +
   geom_line(linewidth = 0.8) +
   facet_grid(age ~ state) +
-  scale_colour_manual(NULL, values = c("#2a78d6", "#eb6834"), aesthetics = c("colour", "fill")) +
+  scale_colour_manual(NULL, values = unname(COL[c("blue", "orange")]),
+                      aesthetics = c("colour", "fill")) +
   scale_x_continuous(breaks = c(1985, 2000, 2015)) +
   labs(x = NULL, y = "Flow effect (per SD of outflow)",
        title = "Time-varying flow effects in the real Longfin Smelt data",
        subtitle = "One-stage models with a prior on x0; bands are 95% intervals") +
-  theme_minimal(base_size = 12) +
-  theme(legend.position = "top", panel.grid.minor = element_blank(), plot.title.position = "plot")
-ggsave(file.path("output", "figures", "real_data_tv_slopes.png"), p_tv,
-       width = 12, height = 6, dpi = 200, bg = "white")
+  theme_talk() +
+  theme(panel.grid.minor = element_blank())
+save_figure("real_data_tv_slopes.png", p_tv, width = 12, height = 6)

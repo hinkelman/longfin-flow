@@ -200,7 +200,7 @@ applies it to the real data.
 
 ## 6. Can AICc tell whether flow drives growth or level?
 
-Studies `extra_growth` and `extra_level` refit the main and level-truth data (same seeds). Each fit puts
+Studies `checks_growth` and `checks_level` refit the main and level-truth data (same seeds). Each fit puts
 a static flow effect in the process equation (C, growth) and, separately, on the observations (D,
 level), plus the era version of each. Both forms have the same number of parameters, so the comparison
 is a straight likelihood comparison. Tables: `output/check_structure.csv`; figure: `check_structure.png`.
@@ -221,7 +221,7 @@ Takeaways:
    structure in 99% of replicates and the wrong one in at most 1%. With no flow effect, it picks either
    structure about as often, as it should.
 2. **The static estimate in the right structure is trustworthy.** Under level truth, the static D's 95%
-   intervals cover the true average effect in 88–94% of replicates (65% for the strong 1987 step,
+   intervals cover the true 1980–2020 average effect in 88–95% of replicates (69% for the strong 1987 step,
    because of the flow weighting in section 3).
 3. **The era test works much better in the level form.** Calibrated on the 200 pooled nulls, the level
    form needs only ΔAICc < −1.61 for 5% false positives (vs −6.37 in the growth form). Under level

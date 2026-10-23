@@ -1,28 +1,18 @@
-# Summarize the structure and interval checks (studies extra_growth, extra_level).
+# Summarize the structure and interval checks (studies checks_growth, checks_level).
 #  structure: how often does AICc pick the true structure (flow on growth vs level)?
 #  intervals: do one-stage time-varying slopes with a prior on x0 give honest 95%
 #             intervals, compared with x0 estimated, and the paper's DLM with a prior?
 
-suppressMessages({
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)
-})
+suppressMessages(library(tidyr))
+source("R/plot_helpers.R")
 
-results_dir <- file.path("output", "results")
-scenario_labels <- c(null = "Null (no effect)", constant = "Constant",
-                     decline = "Linear decline", step_1987 = "Step at 1987",
-                     step_2002 = "Step at 2002")
-truth_labels <- c(growth = "Truth: flow drives growth", level = "Truth: flow drives level")
-
-read_study <- function(name) {
-  bind_rows(lapply(c("extra_growth", "extra_level"), function(s)
-    read.csv(file.path(results_dir, paste0(s, "_", name, ".csv")))))
+read_checks <- function(part) {
+  bind_rows(read_result("checks_growth", part), read_result("checks_level", part)) |>
+    mutate(scenario = factor_scenario(scenario))
 }
 
 # Structure ---------------------------------------------------------------------------
-st <- read_study("structure") |>
-  mutate(scenario = factor(scenario, names(scenario_labels)))
+st <- read_checks("structure")
 reps <- distinct(st, truth, scenario, b, rep, AICc_stage1, AICc_C, AICc_D, AICc_era_C, AICc_era_D)
 
 # null-calibrated thresholds for "era beats static" within each form, pooling the
@@ -44,11 +34,13 @@ tab_structure <- reps |>
             .groups = "drop") |>
   mutate(threshold_era_C = thr_era_C, threshold_era_D = thr_era_D)
 
-# true means come from the interval metrics (same replicates, scored 1981-2020)
-v <- read_study("variants") |> mutate(scenario = factor(scenario, names(scenario_labels)))
-true_means <- distinct(v, truth, scenario, b, rep, state, true_mean)
+# The static C and D estimates average over all of 1980-2020, so compare them with
+# the true effect averaged over the same years
+true_means <- distinct(st, scenario, b) |>
+  mutate(true_mean = mapply(function(sc, b) mean(beta_path(sc, YEARS, b)),
+                            as.character(scenario), b))
 tab_static <- st |>
-  left_join(true_means, by = c("truth", "scenario", "b", "rep", "state")) |>
+  left_join(true_means, by = c("scenario", "b")) |>
   group_by(truth, scenario, b) |>
   summarize(true_mean = mean(true_mean),
             C_mean = mean(C_est), D_mean = mean(D_est),
@@ -70,33 +62,30 @@ print(as.data.frame(structure_out |> select(truth, scenario, b, true_mean, C_mea
                                             era_D_flags_calibrated)), digits = 2, row.names = FALSE)
 
 p_structure <- structure_out |>
-  mutate(b_lab = ifelse(scenario == "null", "no effect", sprintf("b = %.2f", b)),
-         truth = truth_labels[truth]) |>
+  mutate(b_lab = b_label(scenario, b), truth = TRUTH_LABELS[truth]) |>
   select(truth, scenario, b_lab, `Level preferred (dAICc > 2)` = picks_level_by_2,
          `Growth preferred (dAICc > 2)` = picks_growth_by_2) |>
   pivot_longer(-c(truth, scenario, b_lab), names_to = "choice", values_to = "rate") |>
   ggplot(aes(scenario, rate, fill = choice)) +
   geom_col(position = position_dodge(width = 0.75), width = 0.7) +
   facet_grid(truth ~ b_lab, scales = "free_x", space = "free_x") +
-  scale_x_discrete(labels = scenario_labels) +
+  scale_x_discrete(labels = SCENARIO_LABELS) +
   scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
-  scale_fill_manual(NULL, values = c("Level preferred (dAICc > 2)" = "#eb6834",
-                                     "Growth preferred (dAICc > 2)" = "#2a78d6")) +
+  scale_fill_manual(NULL, values = c("Level preferred (dAICc > 2)" = COL[["orange"]],
+                                     "Growth preferred (dAICc > 2)" = COL[["blue"]])) +
   labs(x = NULL, y = "Share of replicates",
        title = "Can AICc tell whether flow drives growth or level?",
        subtitle = "Static flow effect fit both ways to the same simulated station data") +
-  theme_minimal(base_size = 12) +
-  theme(legend.position = "top", panel.grid.major.x = element_blank(),
-        axis.text.x = element_text(angle = 20, hjust = 1), plot.title.position = "plot")
-ggsave(file.path("output", "figures", "check_structure.png"), p_structure,
-       width = 11, height = 6, dpi = 200, bg = "white")
+  theme_talk() +
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_text(angle = 20, hjust = 1))
+save_figure("check_structure.png", p_structure, width = 11, height = 6)
 
 # Intervals ---------------------------------------------------------------------------
-interval_labels <- c(F_tv_matched = "One-stage, x0 estimated",
+INTERVAL_LABELS <- c(F_tv_matched = "One-stage, x0 estimated",
                      G_tv_matched_prior = "One-stage, prior on x0",
                      H_paper_dlm_prior = "Paper DLM, prior on x0")
-tab_intervals <- v |>
-  mutate(tv = q_slope > 1e-8) |>
+tab_intervals <- read_checks("variants") |>
+  mutate(tv = q_slope > Q_TV_THRESHOLD) |>
   group_by(truth, scenario, b, variant) |>
   summarize(ratio_to_truth = ifelse(mean(true_mean) == 0, NA, mean(mean_slope) / mean(true_mean)),
             flags_time_varying = mean(tv),
@@ -112,18 +101,16 @@ print(as.data.frame(tab_intervals |> select(truth, scenario, b, variant, ratio_t
       digits = 2, row.names = FALSE)
 
 p_intervals <- tab_intervals |>
-  mutate(b_lab = ifelse(scenario == "null", "no effect", sprintf("b = %.2f", b)),
-         truth = truth_labels[truth], variant = interval_labels[variant]) |>
+  mutate(b_lab = b_label(scenario, b), truth = TRUTH_LABELS[truth],
+         variant = INTERVAL_LABELS[variant]) |>
   ggplot(aes(ci_coverage, scenario, colour = variant)) +
   geom_vline(xintercept = 0.95, linetype = "22", colour = "grey40") +
   geom_point(size = 3, position = position_dodge(width = 0.6)) +
   facet_grid(truth ~ b_lab, scales = "free_y", space = "free_y") +
-  scale_y_discrete(labels = scenario_labels, limits = rev) +
+  scale_y_discrete(labels = SCENARIO_LABELS, limits = rev) +
   scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
-  scale_colour_manual(NULL, values = c("#6250d6", "#1baf7a", "#2a78d6")) +
+  scale_colour_manual(NULL, values = unname(COL[c("violet", "aqua", "blue")])) +
   labs(x = "Share of years where the 95% interval covers the true effect (target 95%)", y = NULL,
        title = "Does a prior on x0 fix the slope intervals?") +
-  theme_minimal(base_size = 12) +
-  theme(legend.position = "top", plot.title.position = "plot")
-ggsave(file.path("output", "figures", "check_intervals.png"), p_intervals,
-       width = 11, height = 6, dpi = 200, bg = "white")
+  theme_talk()
+save_figure("check_intervals.png", p_intervals, width = 11, height = 6)

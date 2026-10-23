@@ -1,27 +1,18 @@
 # Summarize the simulation study: recovery tables and figures for the talk.
 
-suppressMessages({
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)
-})
+suppressMessages(library(tidyr))
+source("R/plot_helpers.R")
 
-results_dir <- file.path("output", "results")
-dir.create(file.path("output", "figures"), showWarnings = FALSE)
+col_truth <- COL[["truth"]]
+col_marss <- COL[["blue"]]
+col_dlm <- COL[["orange"]]
+col_era <- COL[["aqua"]]
 
-scenario_labels <- c(null = "Null (no effect)", constant = "Constant",
-                     decline = "Linear decline", step_1987 = "Step at 1987",
-                     step_2002 = "Step at 2002")
-col_truth <- "#0b0b0b"
-col_marss <- "#2a78d6"
-col_dlm <- "#eb6834"
-col_era <- "#1baf7a"
-
-s <- read.csv(file.path(results_dir, "main_summary.csv")) |>
-  mutate(scenario = factor(scenario, names(scenario_labels)),
+s <- read_result("main", "summary") |>
+  mutate(scenario = factor_scenario(scenario),
          marss_lo = marss_C - 1.96 * marss_se,
          marss_hi = marss_C + 1.96 * marss_se,
-         dlm_tv = dlm_q_slope > 1e-8)
+         dlm_tv = dlm_q_slope > Q_TV_THRESHOLD)
 
 # Recovery table --------------------------------------------------------------
 # State-level metrics pool the 4 habitat states; the era AICc test is per replicate
@@ -68,20 +59,20 @@ print(as.data.frame(recovery |> select(scenario, b, true_mean, marss_C_mean, mar
 cat("\nEra estimates vs truth:\n"); print(as.data.frame(tab_era), digits = 2)
 
 # Figure 1: what each method recovers over time ----------------------------------
-dlm_band <- read.csv(file.path(results_dir, "main_dlm_path_quantiles.csv")) |>
-  mutate(scenario = factor(scenario, names(scenario_labels))) |>
+dlm_band <- read_result("main", "dlm_path_quantiles") |>
+  mutate(scenario = factor_scenario(scenario)) |>
   rename(lo = q10, mid = median, hi = q90)
 
 marss_line <- s |> group_by(scenario, b) |>
   summarize(marss_mid = median(marss_C), .groups = "drop")
 
+era_years <- split(YEARS, era_of(YEARS))
 era_steps <- s |>
   group_by(scenario, b) |>
   summarize(pre1987 = median(era_pre1987), `1987_2002` = median(era_1987_2002),
             post2002 = median(era_post2002), .groups = "drop") |>
   pivot_longer(c(pre1987, `1987_2002`, post2002), names_to = "era", values_to = "est") |>
-  mutate(start = c(pre1987 = 1980, `1987_2002` = 1987, post2002 = 2003)[era],
-         end = c(pre1987 = 1986, `1987_2002` = 2002, post2002 = 2020)[era])
+  mutate(start = sapply(era_years, min)[era], end = sapply(era_years, max)[era])
 
 recovery_plot <- function(b_val) {
   ggplot(filter(dlm_band, b == b_val), aes(year)) +
@@ -95,44 +86,39 @@ recovery_plot <- function(b_val) {
                  aes(x = start, xend = end, y = est, yend = est, colour = "Era MARSS"),
                  linewidth = 1.1) +
     geom_step(aes(y = true_beta, colour = "True effect"), linewidth = 0.8, direction = "mid") +
-    facet_wrap(~ scenario, nrow = 1, labeller = as_labeller(scenario_labels)) +
+    facet_wrap(~ scenario, nrow = 1, labeller = as_labeller(SCENARIO_LABELS)) +
     scale_colour_manual(NULL, values = c("True effect" = col_truth, "MARSS C (paper)" = col_marss,
                                          "DLM slope (paper)" = col_dlm, "Era MARSS" = col_era),
                         breaks = c("True effect", "MARSS C (paper)", "Era MARSS", "DLM slope (paper)")) +
     labs(x = NULL, y = "Flow effect (per SD of outflow)",
          title = sprintf("Recovered flow effects, starting effect b = %.2f", b_val),
          subtitle = "Medians over 100 replicates x 4 habitat states; orange band = 10th-90th percentile of DLM slopes") +
-    theme_minimal(base_size = 12) +
-    theme(legend.position = "top", panel.grid.minor = element_blank(),
-          plot.title.position = "plot")
+    theme_talk() +
+    theme(panel.grid.minor = element_blank())
 }
-ggsave(file.path("output", "figures", "sim_recovery_b008.png"), recovery_plot(0.08),
-       width = 13, height = 4.5, dpi = 200, bg = "white")
-ggsave(file.path("output", "figures", "sim_recovery_b024.png"), recovery_plot(0.24),
-       width = 13, height = 4.5, dpi = 200, bg = "white")
+save_figure("sim_recovery_b008.png", recovery_plot(0.08), width = 13, height = 4.5)
+save_figure("sim_recovery_b024.png", recovery_plot(0.24), width = 13, height = 4.5)
 
 # Figure 2: does each method say "the effect changed"? --------------------------
 detect <- recovery |>
   select(scenario, b, `DLM: slope variance > 0` = dlm_flags_time_varying,
          `Era MARSS: dAICc < -2` = era_preferred_dAICc_lt_minus2) |>
   pivot_longer(-c(scenario, b), names_to = "method", values_to = "rate") |>
-  mutate(b_lab = ifelse(scenario == "null", "no effect", sprintf("b = %.2f", b)))
+  mutate(b_lab = b_label(scenario, b))
 
 p_detect <- ggplot(detect, aes(scenario, rate, fill = method)) +
   geom_col(position = position_dodge(width = 0.75), width = 0.7) +
   geom_text(aes(label = scales::percent(rate, accuracy = 1)),
             position = position_dodge(width = 0.75), vjust = -0.4, size = 3.2, colour = "grey20") +
   facet_wrap(~ b_lab, nrow = 1, scales = "free_x") +
-  scale_x_discrete(labels = scenario_labels) +
+  scale_x_discrete(labels = SCENARIO_LABELS) +
   scale_y_continuous(labels = scales::percent, limits = c(0, 1.08)) +
   scale_fill_manual(NULL, values = c(col_dlm, col_era)) +
   labs(x = NULL, y = "Share of fits flagging a time-varying effect",
        title = "How often each method flags a change in the flow effect") +
-  theme_minimal(base_size = 12) +
-  theme(legend.position = "top", panel.grid.major.x = element_blank(),
-        axis.text.x = element_text(angle = 20, hjust = 1), plot.title.position = "plot")
-ggsave(file.path("output", "figures", "sim_detection.png"), p_detect,
-       width = 11, height = 4.8, dpi = 200, bg = "white")
+  theme_talk() +
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_text(angle = 20, hjust = 1))
+save_figure("sim_detection.png", p_detect, width = 11, height = 4.8)
 
 # Figure 3: DLM interval coverage --------------------------------------------------
 p_cover <- s |>
@@ -141,10 +127,8 @@ p_cover <- s |>
   geom_point(alpha = 0.35, size = 1.4) +
   geom_hline(yintercept = 0.95, linetype = "22", colour = "grey40") +
   scale_x_log10() +
-  scale_colour_manual(NULL, values = c(col_dlm, "#6250d6")) +
+  scale_colour_manual(NULL, values = c(col_dlm, COL[["violet"]])) +
   labs(x = "Mean DLM slope SE (log scale)", y = "Share of years where 95% CI covers true effect",
        title = "DLM 95% intervals: nominal vs actual coverage") +
-  theme_minimal(base_size = 12) +
-  theme(legend.position = "top", plot.title.position = "plot")
-ggsave(file.path("output", "figures", "sim_dlm_coverage.png"), p_cover,
-       width = 7, height = 5, dpi = 200, bg = "white")
+  theme_talk()
+save_figure("sim_dlm_coverage.png", p_cover, width = 7, height = 5)

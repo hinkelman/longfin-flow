@@ -31,8 +31,10 @@ changes a file, the script flags the mismatch.
 | `R/fetch_original.R` | Downloads the code from Zenodo; verifies code and data against the manifest |
 | `R/00_run_original.R` | Runs one of the authors' scripts unmodified, in `output/original_run/script<N>/` |
 | `R/01_replication_check.R` | Compares rerun to published coefficients; DLM variance diagnostics |
-| `R/02_sim_setup.R` | Pulls the age-0 station layout, missing-data pattern, and fitted variances from the authors' pipeline |
-| `R/sim_functions.R` | Data simulation and model-fitting functions |
+| `R/design.R` | Study design shared by all scripts: years, scenarios, eras, replicate grid and seeds, thresholds |
+| `R/02_sim_setup.R` | Builds the age-0 and age-1+ model inputs (stations, missing-data pattern, habitat grouping, fitted variances) from the authors' pipeline |
+| `R/sim_functions.R` | Data simulation, model fitting, and scoring functions |
+| `R/plot_helpers.R` | Shared labels, colors, theme, and result readers for the summary scripts |
 | `R/03_run_simulation.R` | Runs one simulation study in parallel (checkpointed, resumable); see the study list below |
 | `R/04_summarize_simulation.R` | Recovery tables and figures (study `main`) |
 | `R/05_followup_checks.R` | What static MARSS C averages over; era-model false positives and calibrated threshold |
@@ -49,8 +51,8 @@ Simulation studies (`Rscript R/03_run_simulation.R <n_reps> <n_workers> <study>`
 | `main` | flow drives growth | paper's MARSS C, paper's DLM, era model | 1.5 |
 | `dlm_variants` | growth (same data as `main`) | DLM variants changing one choice at a time | 1.7 |
 | `level_truth` | flow drives level | everything in `main` and `dlm_variants` | 2.5 |
-| `extra_growth` | growth (same data as `main`) | growth vs level structure; interval checks | 1.8 |
-| `extra_level` | level (same data as `level_truth`) | growth vs level structure; interval checks | ~2 |
+| `checks_growth` | growth (same data as `main`) | growth vs level structure; interval checks | 1.8 |
+| `checks_level` | level (same data as `level_truth`) | growth vs level structure; interval checks | 1.1 |
 
 ## Reproduce
 
@@ -74,11 +76,11 @@ To rerun the simulations themselves (about 9.5 hours on 7 cores), run the studie
 scripts:
 
 ```bash
-for s in main dlm_variants level_truth extra_growth extra_level; do Rscript R/03_run_simulation.R 100 7 $s; done
+for s in main dlm_variants level_truth checks_growth checks_level; do Rscript R/03_run_simulation.R 100 7 $s; done
 ```
 
 Each replicate is seeded on its own and checkpointed to `output/sim_reps/<study>/`, so an interrupted run
 picks up where it stopped. Studies on the same truth share seeds, so they fit models to identical
 simulated data. Each study writes its compact results to `output/results/<study>_*.csv`.
-`05_followup_checks.R` refits a few null replicates, so it needs `output/sim_setup.rds` from
-`02_sim_setup.R`.
+`02_sim_setup.R` writes `output/setups.rds` (not tracked), which the simulations, `05_followup_checks.R`
+(it refits a few null replicates), and `07_real_data.R` read.

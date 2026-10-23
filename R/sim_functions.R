@@ -1,19 +1,9 @@
-# Functions for the simulation study: generate data with a known (possibly
-# time-varying) flow effect, then fit the paper's MARSS and DLM models to it.
+# Functions for the simulation study and real-data fits: generate data with a known
+# (possibly time-varying) flow effect, fit the paper's MARSS and DLM models and the
+# alternatives to it, and score the fitted flow effects against the truth.
 
 suppressMessages(library(MARSS))
-
-# True flow-effect trajectories -------------------------------------------------
-# b is the flow effect at the start of the series (log-CPUE growth per SD of flow)
-beta_path <- function(scenario, years, b) {
-  switch(scenario,
-         null      = rep(0, length(years)),
-         constant  = rep(b, length(years)),
-         decline   = b * (max(years) - years) / (max(years) - min(years)),
-         step_1987 = ifelse(years < 1987, b, 0),
-         step_2002 = ifelse(years < 2002, b, 0),
-         stop("unknown scenario"))
-}
+source("R/design.R")
 
 # Simulate station-level log CPUE ------------------------------------------------
 # truth = "growth" (the paper's MARSS model; flow changes the growth of log CPUE):
@@ -45,7 +35,7 @@ simulate_data <- function(setup, beta, truth = "growth") {
   list(x = x, y = y)
 }
 
-# Model fits ----------------------------------------------------------------------
+# Fitting helpers -------------------------------------------------------------------
 quiet_marss <- function(...) {
   fit <- NULL
   invisible(capture.output(fit <- suppressWarnings(MARSS(..., silent = TRUE))))
@@ -59,6 +49,23 @@ fit_stage1 <- function(y, setup) {
               control = list(maxit = 10000))
 }
 
+# Fit a flow model warm-started at the stage-1 variance estimates (a variance of
+# exactly 0 is not a valid start, so floor it), falling back to a cold start
+fit_from_stage1 <- function(fit_fun, y, setup, s1, form = "growth") {
+  inits <- list(Q = pmax(coef(s1)$Q, 1e-4), R = coef(s1)$R, x0 = coef(s1)$x0)
+  fit <- fit_fun(y, setup, inits = inits, form = form)
+  if (is.null(fit$par)) fit <- fit_fun(y, setup, form = form)
+  fit
+}
+
+# Refit with BFGS starting from a fitted model, keeping whichever fit is better
+polish_bfgs <- function(fit, y) {
+  b <- quiet_marss(y, model = fit$call$model, inits = fit, method = "BFGS",
+                   control = list(maxit = 5000))
+  if (!is.null(b$par) && b$logLik > fit$logLik) b else fit
+}
+
+# Static and era flow models ----------------------------------------------------------
 # Flow can enter in two places (form):
 #   "growth": in the process equation, x_t = x_{t-1} + C c_t + w_t (the paper's MARSS)
 #   "level":  in the observation equation, y_t = Z x_t + D d_t + v_t, so flow shifts
@@ -67,11 +74,8 @@ fit_stage1 <- function(y, setup) {
 # one covariate and "<state> <covariate>" for several.
 flow_coef_matrix <- function(setup, covariates, form) {
   states <- names(setup$x0)
-  if (form == "growth") {
-    rows <- states
-  } else {
-    rows <- as.character(setup$Z)  # one row per observed series, shared within a state
-  }
+  # in the level form D has one row per observed series, shared within a state
+  rows <- if (form == "growth") states else as.character(setup$Z)
   cols <- rownames(covariates)
   M <- matrix(list(0), length(rows), length(cols))
   for (j in seq_along(cols)) {
@@ -93,42 +97,53 @@ fit_flow_model <- function(y, setup, covariates, form = "growth", inits = NULL) 
   quiet_marss(y, model = model, inits = inits, control = list(maxit = 10000))
 }
 
-# Paper's time-averaged model: one flow coefficient per state
-fit_marss_c <- function(y, setup, inits = NULL, form = "growth") {
-  fit_flow_model(y, setup, matrix(setup$flow_z, nrow = 1, dimnames = list("flow", NULL)),
-                 form, inits)
-}
+flow_covariate <- function(setup) matrix(setup$flow_z, nrow = 1, dimnames = list("flow", NULL))
 
-# Era model: separate flow coefficient per state for 1980-86, 1987-2002, 2003-20
+# Era covariates: flow in one era, 0 in the others (one row per era)
 era_covariates <- function(setup) {
-  era <- cut(setup$years, c(-Inf, 1986, 2002, Inf), labels = c("pre1987", "1987_2002", "post2002"))
+  era <- era_of(setup$years)
   cc <- t(sapply(levels(era), function(e) setup$flow_z * (era == e)))
   dimnames(cc) <- list(levels(era), setup$years)
   cc
 }
 
-fit_marss_era <- function(y, setup, inits = NULL, form = "growth") {
+# One flow effect per state (the paper's MARSS in the growth form)
+fit_static_flow <- function(y, setup, inits = NULL, form = "growth") {
+  fit_flow_model(y, setup, flow_covariate(setup), form, inits)
+}
+
+# Separate flow effects per state for each era
+fit_era_flow <- function(y, setup, inits = NULL, form = "growth") {
   fit_flow_model(y, setup, era_covariates(setup), form, inits)
 }
 
-# Flow coefficients of a fitted flow model as a states x covariates matrix
-flow_coefs <- function(fit, setup, form = "growth") {
-  M <- coef(fit, type = "matrix")[[if (form == "growth") "C" else "D"]]
-  # in the level form D has one row per series; take the first series of each state
-  M <- M[match(names(setup$x0), if (form == "growth") rownames(M) else as.character(setup$Z)), ,
-         drop = FALSE]
-  rownames(M) <- names(setup$x0)
-  M
+# Flow effects of a fitted static or era model: one row per state and covariate,
+# with Hessian-based SEs (NA if the Hessian fails)
+flow_coef_table <- function(fit, setup, form = "growth") {
+  covariates <- if (form == "growth") fit$call$model$c else fit$call$model$d
+  M <- flow_coef_matrix(setup, covariates, form)
+  # first row of each state (in the level form, rows are series within states)
+  rows <- if (form == "growth") seq_len(nrow(M)) else match(names(setup$x0), as.character(setup$Z))
+  par_names <- unlist(M[rows, , drop = FALSE])
+  prefix <- if (form == "growth") "C" else "D"
+  td <- tryCatch(MARSS::tidy(fit), error = function(e) NULL)
+  data.frame(state = rep(names(setup$x0), ncol(M)),
+             covariate = rep(rownames(covariates), each = length(rows)),
+             estimate = coef(fit)[[prefix]][par_names, 1],
+             se = if (is.null(td)) NA_real_ else
+               td$std.error[match(paste0(prefix, ".", par_names), td$term)],
+             row.names = NULL)
 }
 
+# Time-varying flow models --------------------------------------------------------------
 # DLM with random-walk coefficients, fitted by BFGS as in the paper:
 #   y_t = alpha_t + beta_t * flow_t + v_t  (intercept = TRUE, the paper's 3_DLM_multivariate_v4.R)
 #   y_t = beta_t * flow_t + v_t            (intercept = FALSE)
 # y has one row per habitat state; the slopes are the last nrow(y) DLM states.
 # By default x0 is estimated (as in the paper). With prior_var, x0 is instead a
-# prior with mean x0_mean and variance prior_var, so the reported state SEs include the
-# uncertainty about the starting values (see fit_tv_marss).
-fit_dlm <- function(y, flow, intercept = TRUE, prior_var = NULL, x0_mean = rep(0, m)) {
+# prior with mean x0_mean (default 0) and variance prior_var, so the reported state
+# SEs include the uncertainty about the starting values (see fit_tv_marss).
+fit_dlm <- function(y, flow, intercept = TRUE, prior_var = NULL, x0_mean = NULL) {
   k <- nrow(y)
   TT <- ncol(y)
   m <- if (intercept) 2 * k else k
@@ -145,7 +160,7 @@ fit_dlm <- function(y, flow, intercept = TRUE, prior_var = NULL, x0_mean = rep(0
               A = matrix(0, k, 1), R = "diagonal and unequal")
   inits <- list(x0 = matrix(0, nrow = m))
   if (!is.null(prior_var)) {
-    mod$x0 <- matrix(x0_mean, m, 1)
+    mod$x0 <- matrix(if (is.null(x0_mean)) 0 else x0_mean, m, 1)
     mod$V0 <- diag(prior_var, m)
     mod$tinitx <- 0
     inits <- NULL
@@ -189,6 +204,7 @@ fit_tv_marss <- function(y, setup, inits = NULL, form = "growth", prior_var = NU
   model <- list(B = B, U = "zero", Q = Q, Z = Z, A = "zero", R = setup$R_model,
                 x0 = "unequal", tinitx = 0)
   if (!is.null(prior_var)) {
+    # x0 is fixed (the prior mean), so it can't also have starting values
     model$x0 <- matrix(x0_mean, ncol = 1)
     model$V0 <- diag(prior_var, 2 * k)
     inits$x0 <- NULL
@@ -202,9 +218,19 @@ fit_tv_marss <- function(y, setup, inits = NULL, form = "growth", prior_var = NU
   if (!is.null(bf$par) && bf$logLik >= em$logLik) bf else em
 }
 
-# Slope paths (states x years) and SEs from fit_tv_marss, aligned to setup$years.
-# In the growth form beta_{t-1} multiplies flow_t, so year t uses state column t-1
-# and the first year has no estimate (NA).
+# Slope paths (states x years) and SEs ----------------------------------------------------
+# From fit_dlm: the slopes are the last length(states) DLM states, one column per year
+dlm_slopes <- function(fit, states, years) {
+  idx <- nrow(fit$states) - length(states) + seq_along(states)
+  sl <- fit$states[idx, , drop = FALSE]
+  se <- fit$states.se[idx, , drop = FALSE]
+  dimnames(sl) <- dimnames(se) <- list(states, years)
+  list(slope = sl, se = se)
+}
+
+# From fit_tv_marss, aligned to setup$years. In the growth form beta_{t-1}
+# multiplies flow_t, so year t uses state column t-1 and the first year has no
+# estimate (NA).
 tv_slopes <- function(fit, setup, form = "growth") {
   k <- length(setup$x0)
   idx <- k + seq_len(k)
@@ -218,15 +244,7 @@ tv_slopes <- function(fit, setup, form = "growth") {
   list(slope = sl, se = se)
 }
 
-# Coefficient table (estimate, SE) from a MARSS fit via the Hessian
-coef_table <- function(fit, prefix = "C.") {
-  td <- tryCatch(MARSS::tidy(fit), error = function(e) NULL)
-  if (is.null(td)) return(NULL)
-  td <- td[startsWith(td$term, prefix), c("term", "estimate", "std.error")]
-  rownames(td) <- NULL
-  td
-}
-
+# Scoring against the truth ----------------------------------------------------------------
 # Slope summaries against the true effect, for a matrix of slope paths (states x years)
 slope_metrics <- function(slope, slope_se, beta, q_slope) {
   true <- matrix(beta, nrow(slope), length(beta), byrow = TRUE)
@@ -241,56 +259,26 @@ slope_metrics <- function(slope, slope_se, beta, q_slope) {
              true_mean = mean(beta), true_first = beta[1], true_last = beta[length(beta)])
 }
 
-# Decomposing the paper's DLM: change one modeling choice at a time.
-#   A_paper          level ~ flow, stage-1 smoothed states, random-walk intercept (paper)
-#   B_true_states    level ~ flow, true states, random-walk intercept
-#   C_growth         change in true states ~ flow, random-walk intercept
-#   D_growth_no_int  change in true states ~ flow, no intercept
-#   E_one_stage      time-varying flow effect in the MARSS process equation, station data
-# B-D use the simulated true states, which are never observed; they are diagnostics.
-# All variants are scored on 1981-2020, the years with a growth increment.
-fit_dlm_variants <- function(setup, sim, s1, beta) {
-  states <- names(setup$x0)
-  k <- length(states)
-  keep <- -1
-  flow <- setup$flow_z
-  st1 <- s1$states
-  rownames(st1) <- states
-  growth <- sim$x[, -1, drop = FALSE] - sim$x[, -ncol(sim$x), drop = FALSE]
-
-  fits <- list(
-    A_paper = fit_dlm(st1, flow),
-    B_true_states = fit_dlm(sim$x, flow),
-    C_growth = fit_dlm(growth, flow[-1]),
-    D_growth_no_int = fit_dlm(growth, flow[-1], intercept = FALSE),
-    E_one_stage = fit_tv_marss(sim$y, setup,
-                               inits = list(x0 = matrix(c(coef(s1)$x0[, 1], rep(0, k)), ncol = 1)))
-  )
-
+# Score a named list of slope fits on the years in score_years.
+#   slopes: function(name, fit) returning list(slope, se) with states x years dimnames
+# Failed fits are dropped. Returns per-state metrics and the slope paths.
+score_slope_fits <- function(fits, slopes, beta, years, score_years) {
   out <- lapply(names(fits), function(v) {
     f <- fits[[v]]
     if (is.null(f$par)) return(NULL)
-    q <- coef(f)$Q[, 1]
-    q_slope <- q[paste0("q_slo_", states)]
-    sl <- f$states[nrow(f$states) - k + 1:k, , drop = FALSE]
-    se <- f$states.se[nrow(f$states) - k + 1:k, , drop = FALSE]
-    if (v %in% c("A_paper", "B_true_states")) {
-      sl <- sl[, keep, drop = FALSE]
-      se <- se[, keep, drop = FALSE]
-    }
-    if (v == "E_one_stage") {
-      # beta_{t-1} multiplies flow_t, so the effect in year t is state column t-1
-      sl <- sl[, -ncol(sl), drop = FALSE]
-      se <- se[, -ncol(se), drop = FALSE]
-    }
-    rownames(sl) <- rownames(se) <- states
-    m <- slope_metrics(sl, se, beta[keep], q_slope)
+    p <- slopes(v, f)
+    cols <- colnames(p$slope) %in% score_years
+    sl <- p$slope[, cols, drop = FALSE]
+    se <- p$se[, cols, drop = FALSE]
+    states <- rownames(sl)
+    true <- beta[years %in% score_years]
+    m <- slope_metrics(sl, se, true, coef(f)$Q[paste0("q_slo_", states), 1])
     m$variant <- v
     m$conv <- f$convergence
     list(metrics = m,
          paths = data.frame(variant = v, state = rep(states, times = ncol(sl)),
-                            year = rep(setup$years[keep], each = k),
-                            true_beta = rep(beta[keep], each = k),
+                            year = rep(as.numeric(colnames(sl)), each = length(states)),
+                            true_beta = rep(true, each = length(states)),
                             slope = as.vector(sl), se = as.vector(se)))
   })
   out <- out[!vapply(out, is.null, logical(1))]
@@ -298,33 +286,60 @@ fit_dlm_variants <- function(setup, sim, s1, beta) {
        paths = do.call(rbind, lapply(out, `[[`, "paths")))
 }
 
-# Extra fits (Item 1 and Item 3 of the follow-up list):
+# Studies ---------------------------------------------------------------------------------
+# The DLM variants and interval checks are scored on 1981-2020, the years with a
+# growth increment. (The main study scores the paper's DLM on all of 1980-2020; it
+# predates the variants and is kept as run.)
+score_years <- function(setup) setup$years[-1]
+
+# Decomposing the paper's DLM: change one modeling choice at a time.
+#   A_paper          level ~ flow, stage-1 smoothed states, random-walk intercept (paper)
+#   B_true_states    level ~ flow, true states, random-walk intercept
+#   C_growth         change in true states ~ flow, random-walk intercept
+#   D_growth_no_int  change in true states ~ flow, no intercept
+#   E_one_stage      time-varying flow effect in the MARSS process equation, station data
+# B-D use the simulated true states, which are never observed; they are diagnostics.
+fit_dlm_variants <- function(setup, sim, s1, beta) {
+  states <- names(setup$x0)
+  years <- setup$years
+  flow <- setup$flow_z
+  st1 <- s1$states
+  rownames(st1) <- states
+  growth <- sim$x[, -1, drop = FALSE] - sim$x[, -ncol(sim$x), drop = FALSE]
+  x0_mean <- c(coef(s1)$x0[, 1], rep(0, length(states)))
+
+  fits <- list(
+    A_paper = fit_dlm(st1, flow),
+    B_true_states = fit_dlm(sim$x, flow),
+    C_growth = fit_dlm(growth, flow[-1]),
+    D_growth_no_int = fit_dlm(growth, flow[-1], intercept = FALSE),
+    E_one_stage = fit_tv_marss(sim$y, setup, inits = list(x0 = matrix(x0_mean, ncol = 1)))
+  )
+  slopes <- function(v, f) {
+    switch(v,
+           A_paper = , B_true_states = dlm_slopes(f, states, years),
+           C_growth = , D_growth_no_int = dlm_slopes(f, states, years[-1]),
+           E_one_stage = tv_slopes(f, setup, "growth"))
+  }
+  score_slope_fits(fits, slopes, beta, years, score_years(setup))
+}
+
+# Structure and interval checks:
 #  structure: static flow effect as growth (C) or level (D), and the era versions of
 #             both; AICc says which structure the data favor
 #  intervals: the one-stage time-varying model in the form matching the truth, with
-#             x0 estimated (as before) or given a prior, and the paper's DLM with a prior
-# Interval variants are scored on 1981-2020, like fit_dlm_variants.
-fit_extra <- function(setup, sim, s1, beta, truth) {
+#             x0 estimated or given a prior, and the paper's DLM with a prior
+fit_checks <- function(setup, sim, s1, beta, truth) {
   states <- names(setup$x0)
   k <- length(states)
-  s1_inits <- list(Q = pmax(coef(s1)$Q, 1e-4), R = coef(s1)$R, x0 = coef(s1)$x0)
-  refit <- function(f, form) {
-    fit <- f(sim$y, setup, inits = s1_inits, form = form)
-    if (is.null(fit$par)) fit <- f(sim$y, setup, form = form)
-    fit
-  }
-  fc <- refit(fit_marss_c, "growth")
-  fd <- refit(fit_marss_c, "level")
-  ec <- refit(fit_marss_era, "growth")
-  ed <- refit(fit_marss_era, "level")
-  se_of <- function(fit, prefix) {
-    ct <- coef_table(fit, prefix)
-    if (is.null(ct)) return(rep(NA_real_, k))
-    ct$std.error[match(paste0(prefix, states), ct$term)]
-  }
+  fc <- fit_from_stage1(fit_static_flow, sim$y, setup, s1, "growth")
+  fd <- fit_from_stage1(fit_static_flow, sim$y, setup, s1, "level")
+  ec <- fit_from_stage1(fit_era_flow, sim$y, setup, s1, "growth")
+  ed <- fit_from_stage1(fit_era_flow, sim$y, setup, s1, "level")
+  C <- flow_coef_table(fc, setup, "growth")
+  D <- flow_coef_table(fd, setup, "level")
   structure <- data.frame(state = states,
-                          C_est = flow_coefs(fc, setup, "growth")[, 1], C_se = se_of(fc, "C."),
-                          D_est = flow_coefs(fd, setup, "level")[, 1], D_se = se_of(fd, "D."),
+                          C_est = C$estimate, C_se = C$se, D_est = D$estimate, D_se = D$se,
                           AICc_stage1 = s1$AICc, AICc_C = fc$AICc, AICc_D = fd$AICc,
                           AICc_era_C = ec$AICc, AICc_era_D = ed$AICc,
                           conv_C = fc$convergence, conv_D = fd$convergence,
@@ -341,116 +356,86 @@ fit_extra <- function(setup, sim, s1, beta, truth) {
     G_tv_matched_prior = fit_tv_marss(sim$y, setup, form = truth, prior_var = 1, x0_mean = x0_mean),
     H_paper_dlm_prior = fit_dlm(st1, setup$flow_z, prior_var = 1, x0_mean = c(st1[, 1], rep(0, k)))
   )
-  keep <- -1
-  out <- lapply(names(fits), function(v) {
-    f <- fits[[v]]
-    if (is.null(f$par)) return(NULL)
-    q <- coef(f)$Q[, 1]
-    if (v == "H_paper_dlm_prior") {
-      sl <- f$states[k + 1:k, keep, drop = FALSE]
-      se <- f$states.se[k + 1:k, keep, drop = FALSE]
-      rownames(sl) <- rownames(se) <- states
-    } else {
-      p <- tv_slopes(f, setup, truth)
-      sl <- p$slope[, keep, drop = FALSE]
-      se <- p$se[, keep, drop = FALSE]
-    }
-    m <- slope_metrics(sl, se, beta[keep], q[paste0("q_slo_", states)])
-    m$variant <- v
-    m$conv <- f$convergence
-    list(metrics = m,
-         paths = data.frame(variant = v, state = rep(states, times = ncol(sl)),
-                            year = rep(setup$years[keep], each = k),
-                            true_beta = rep(beta[keep], each = k),
-                            slope = as.vector(sl), se = as.vector(se)))
-  })
-  out <- out[!vapply(out, is.null, logical(1))]
-  list(structure = structure,
-       metrics = do.call(rbind, lapply(out, `[[`, "metrics")),
-       paths = do.call(rbind, lapply(out, `[[`, "paths")))
+  slopes <- function(v, f) {
+    if (v == "H_paper_dlm_prior") dlm_slopes(f, states, setup$years) else tv_slopes(f, setup, truth)
+  }
+  scored <- score_slope_fits(fits, slopes, beta, setup$years, score_years(setup))
+  c(list(structure = structure), scored)
 }
 
-# One replicate: simulate, fit everything, return tidy summaries -----------------
+# The paper's three models on one simulated data set: static MARSS C, era MARSS
+# (growth form), and the DLM on the stage-1 states
+fit_main <- function(setup, sim, s1, beta) {
+  states <- names(setup$x0)
+  years <- setup$years
+  mc <- fit_from_stage1(fit_static_flow, sim$y, setup, s1)
+  me <- fit_from_stage1(fit_era_flow, sim$y, setup, s1)
+  dlm_states <- s1$states
+  rownames(dlm_states) <- states
+  dl <- fit_dlm(dlm_states, setup$flow_z)
+
+  C <- flow_coef_table(mc, setup)
+  marss <- data.frame(state = states, marss_C = C$estimate, marss_se = C$se)
+
+  era_C <- flow_coef_table(me, setup)
+  era <- data.frame(state = states,
+                    era_pre1987 = era_C$estimate[era_C$covariate == "pre1987"],
+                    era_1987_2002 = era_C$estimate[era_C$covariate == "1987_2002"],
+                    era_post2002 = era_C$estimate[era_C$covariate == "post2002"],
+                    dAICc_era = me$AICc - mc$AICc)
+
+  p <- dlm_slopes(dl, states, years)
+  q <- coef(dl)$Q[, 1]
+  m <- slope_metrics(p$slope, p$se, beta, q[paste0("q_slo_", states)])
+  dlm <- data.frame(state = states,
+                    dlm_mean = m$mean_slope, dlm_first = m$first, dlm_last = m$last,
+                    dlm_q_slope = m$q_slope, dlm_q_int = unname(q[paste0("q_int_", states)]),
+                    dlm_mean_se = m$mean_se, dlm_cover = m$cover, dlm_rmse = m$rmse)
+
+  era_of_year <- era_of(years)
+  summary <- Reduce(function(a, b) merge(a, b, by = "state"), list(marss, era, dlm))
+  summary <- cbind(summary,
+                   true_mean = mean(beta), true_first = beta[1], true_last = beta[length(beta)],
+                   true_pre1987 = mean(beta[era_of_year == "pre1987"]),
+                   true_1987_2002 = mean(beta[era_of_year == "1987_2002"]),
+                   true_post2002 = mean(beta[era_of_year == "post2002"]),
+                   conv_s1 = s1$convergence, conv_c = mc$convergence,
+                   conv_era = me$convergence, conv_dlm = dl$convergence)
+  paths <- data.frame(state = rep(states, times = length(years)),
+                      year = rep(years, each = length(states)),
+                      true_beta = rep(beta, each = length(states)),
+                      dlm_slope = as.vector(p$slope), dlm_se = as.vector(p$se))
+  list(summary = summary, paths = paths)
+}
+
+# One replicate: simulate, fit, return tidy summaries ----------------------------------------
 #   truth:    "growth" (paper's MARSS model) or "level" (paper's DLM model)
-#   main:     fit the paper's MARSS C, the paper's DLM, and the era model
+#   main:     fit the paper's MARSS C, the paper's DLM, and the era model (fit_main)
 #   variants: also fit the DLM variants (fit_dlm_variants)
-#   extra:    also fit the structure and interval checks (fit_extra)
+#   checks:   also fit the structure and interval checks (fit_checks)
 run_replicate <- function(setup, scenario, b, rep_id, truth = "growth", main = TRUE,
-                          variants = FALSE, extra = FALSE) {
+                          variants = FALSE, checks = FALSE) {
   beta <- beta_path(scenario, setup$years, b)
   sim <- simulate_data(setup, beta, truth)
-  states <- names(setup$x0)
   ids <- data.frame(scenario = scenario, b = b, rep = rep_id, truth = truth)
-
   s1 <- fit_stage1(sim$y, setup)
   result <- list()
 
   if (main) {
-    # warm-start the covariate models at stage-1 variance estimates (a variance
-    # of exactly 0 is not a valid start, so floor it), falling back to a cold start
-    s1_inits <- list(Q = pmax(coef(s1)$Q, 1e-4), R = coef(s1)$R, x0 = coef(s1)$x0)
-    mc <- fit_marss_c(sim$y, setup, inits = s1_inits)
-    if (is.null(mc$par)) mc <- fit_marss_c(sim$y, setup)
-    me <- fit_marss_era(sim$y, setup, inits = s1_inits)
-    if (is.null(me$par)) me <- fit_marss_era(sim$y, setup)
-    dlm_states <- s1$states
-    rownames(dlm_states) <- states
-    dl <- fit_dlm(dlm_states, setup$flow_z)
-
-    ct <- coef_table(mc)
-    marss <- data.frame(state = states,
-                        marss_C = coef(mc)$C[paste0(states), 1] %||% NA,
-                        marss_se = NA_real_)
-    if (!is.null(ct)) marss$marss_se <- ct$std.error[match(paste0("C.", states), ct$term)]
-
-    era_C <- coef(me, type = "matrix")$C
-    era <- data.frame(state = states,
-                      era_pre1987 = era_C[states, 1],
-                      era_1987_2002 = era_C[states, 2],
-                      era_post2002 = era_C[states, 3],
-                      dAICc_era = me$AICc - mc$AICc)
-
-    q <- coef(dl)$Q[, 1]
-    slope <- dl$states[5:8, , drop = FALSE]
-    slope_se <- dl$states.se[5:8, , drop = FALSE]
-    dlm <- data.frame(state = states,
-                      dlm_mean = rowMeans(slope),
-                      dlm_first = slope[, 1],
-                      dlm_last = slope[, ncol(slope)],
-                      dlm_q_slope = q[paste0("q_slo_", states)],
-                      dlm_q_int = q[paste0("q_int_", states)],
-                      dlm_mean_se = rowMeans(slope_se),
-                      dlm_cover = rowMeans(abs(slope - matrix(beta, 4, length(beta), byrow = TRUE)) <=
-                                             1.96 * slope_se),
-                      dlm_rmse = sqrt(rowMeans((slope - matrix(beta, 4, length(beta), byrow = TRUE))^2)))
-
-    summary <- Reduce(function(a, b) merge(a, b, by = "state"), list(marss, era, dlm))
-    summary <- cbind(scenario = scenario, b = b, rep = rep_id, summary,
-                     true_mean = mean(beta), true_first = beta[1], true_last = beta[length(beta)],
-                     true_pre1987 = mean(beta[setup$years < 1987]),
-                     true_1987_2002 = mean(beta[setup$years >= 1987 & setup$years <= 2002]),
-                     true_post2002 = mean(beta[setup$years > 2002]),
-                     conv_s1 = s1$convergence, conv_c = mc$convergence,
-                     conv_era = me$convergence, conv_dlm = dl$convergence)
+    f <- fit_main(setup, sim, s1, beta)
+    summary <- cbind(ids[c("scenario", "b", "rep")], f$summary)
+    # the main study's results have no truth column (all growth); level_truth's do
     if (truth != "growth") summary$truth <- truth
-
     result$summary <- summary
-    result$paths <- data.frame(scenario = scenario, b = b, rep = rep_id,
-                               state = rep(states, times = length(setup$years)),
-                               year = rep(setup$years, each = 4),
-                               true_beta = rep(beta, each = 4),
-                               dlm_slope = as.vector(slope),
-                               dlm_se = as.vector(slope_se))
+    result$paths <- cbind(ids[c("scenario", "b", "rep")], f$paths)
   }
-
   if (variants) {
     v <- fit_dlm_variants(setup, sim, s1, beta)
     result$variants <- cbind(ids, v$metrics)
     result$variant_paths <- cbind(ids, v$paths)
   }
-
-  if (extra) {
-    e <- fit_extra(setup, sim, s1, beta, truth)
+  if (checks) {
+    e <- fit_checks(setup, sim, s1, beta, truth)
     result$structure <- cbind(ids, e$structure)
     result$variants <- rbind(result$variants, cbind(ids, e$metrics))
     result$variant_paths <- rbind(result$variant_paths, cbind(ids, e$paths))

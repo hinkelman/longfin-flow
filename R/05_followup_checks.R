@@ -6,7 +6,7 @@
 #     incomplete optimization, then calibrate the dAICc threshold on the nulls.
 
 source("R/sim_functions.R")
-setup <- readRDS(file.path("output", "sim_setup.rds"))
+setup <- readRDS(file.path("output", "setups.rds"))$age0
 s <- read.csv(file.path("output", "results", "main_summary.csv"))
 yrs <- setup$years
 
@@ -35,26 +35,19 @@ reps_dAICc <- unique(s[, c("scenario", "b", "rep", "dAICc_era")])
 null_reps <- reps_dAICc[reps_dAICc$scenario == "null", ]
 worst <- head(null_reps$rep[order(null_reps$dAICc_era)], 8)
 
-polish <- function(fit, y, model) {
-  b <- quiet_marss(y, model = model, inits = fit, method = "BFGS", control = list(maxit = 5000))
-  if (!is.null(b$par) && b$logLik > fit$logLik) b else fit
-}
+grid <- sim_grid(100)
 refits <- parallel::mclapply(worst, function(r) {
-  # null replicates are grid rows 1-100, so the seed is the one 03_run_simulation.R used
-  set.seed(20261112 + r)
+  # same seed as the main study's replicate (growth truth, offset 0)
+  set.seed(grid_seed(which(grid$scenario == "null" & grid$rep == r)))
   sim <- simulate_data(setup, beta_path("null", yrs, 0.08))
-  base <- list(Z = setup$Z, Q = "diagonal and unequal", R = setup$R_model, B = "identity", A = "zero")
-  m_c <- c(base, list(c = matrix(setup$flow_z, nrow = 1), C = "unequal"))
-  m_e <- c(base, list(c = era_covariates(setup), C = "unconstrained"))
-  fc0 <- quiet_marss(sim$y, model = m_c, control = list(maxit = 10000))
-  fe0 <- quiet_marss(sim$y, model = m_e, control = list(maxit = 10000))
-  fc <- polish(fc0, sim$y, m_c)
-  fe <- polish(fe0, sim$y, m_e)
+  fc0 <- fit_static_flow(sim$y, setup)
+  fe0 <- fit_era_flow(sim$y, setup)
+  fc <- polish_bfgs(fc0, sim$y)
+  fe <- polish_bfgs(fe0, sim$y)
   # the era model nests the static one: also start it at the static solution
   nested <- list(Q = coef(fc)$Q, R = coef(fc)$R, x0 = coef(fc)$x0,
                  C = matrix(rep(coef(fc)$C[, 1], 3), ncol = 1))
-  fe2 <- polish(quiet_marss(sim$y, model = m_e, inits = nested, control = list(maxit = 10000)),
-                sim$y, m_e)
+  fe2 <- polish_bfgs(fit_era_flow(sim$y, setup, inits = nested), sim$y)
   if (fe2$logLik > fe$logLik) fe <- fe2
   data.frame(rep = r,
              sim_dAICc = null_reps$dAICc_era[null_reps$rep == r],

@@ -9,8 +9,8 @@
 #   dlm_variants  same data as main (same seeds); fits the DLM variants that
 #                 change one modeling choice at a time (fit_dlm_variants)
 #   level_truth   truth = level (the paper's DLM model); fits everything
-#   extra_growth  same data as main; structure (growth vs level) and interval checks
-#   extra_level   same data as level_truth; structure and interval checks
+#   checks_growth same data as main; structure (growth vs level) and interval checks
+#   checks_level  same data as level_truth; structure and interval checks
 
 suppressMessages({
   library(future.apply)
@@ -22,33 +22,24 @@ n_reps <- if (length(args) >= 1) as.integer(args[1]) else 100
 n_workers <- if (length(args) >= 2) as.integer(args[2]) else max(1, parallelly::availableCores() - 1)
 study <- if (length(args) >= 3) args[3] else "main"
 
+# seed_offset: studies with the same truth share seeds, so fit identical data
 study_opts <- switch(study,
-  main = list(truth = "growth", main = TRUE, variants = FALSE, extra = FALSE, seed_offset = 0),
-  dlm_variants = list(truth = "growth", main = FALSE, variants = TRUE, extra = FALSE, seed_offset = 0),
-  level_truth = list(truth = "level", main = TRUE, variants = TRUE, extra = FALSE, seed_offset = 10000),
-  extra_growth = list(truth = "growth", main = FALSE, variants = FALSE, extra = TRUE, seed_offset = 0),
-  extra_level = list(truth = "level", main = FALSE, variants = FALSE, extra = TRUE, seed_offset = 10000),
+  main = list(truth = "growth", main = TRUE, variants = FALSE, checks = FALSE, seed_offset = 0),
+  dlm_variants = list(truth = "growth", main = FALSE, variants = TRUE, checks = FALSE, seed_offset = 0),
+  level_truth = list(truth = "level", main = TRUE, variants = TRUE, checks = FALSE, seed_offset = 10000),
+  checks_growth = list(truth = "growth", main = FALSE, variants = FALSE, checks = TRUE, seed_offset = 0),
+  checks_level = list(truth = "level", main = FALSE, variants = FALSE, checks = TRUE, seed_offset = 10000),
   stop("unknown study: ", study))
 
-setup <- readRDS(file.path("output", "sim_setup.rds"))
-setup$fit <- NULL  # not needed on workers
+setup <- readRDS(file.path("output", "setups.rds"))$age0
 
 rep_dir <- file.path("output", "sim_reps", study)
 dir.create(rep_dir, showWarnings = FALSE, recursive = TRUE)
 progress_log <- file.path("output", paste0("sim_progress_", study, ".log"))
 
-# b = 0.08 is roughly the largest time-averaged MARSS flow effect in the paper
-# (age-0 channel midwater); b = 0.24 is a 3x "strong signal" check
-grid <- expand.grid(rep = seq_len(n_reps),
-                    scenario = c("null", "constant", "decline", "step_1987", "step_2002"),
-                    b = c(0.08, 0.24),
-                    stringsAsFactors = FALSE)
-grid <- grid[!(grid$scenario == "null" & grid$b == 0.24), ]  # null does not depend on b
+grid <- sim_grid(n_reps)
 grid$file <- file.path(rep_dir, sprintf("%s_b%.2f_rep%03d.rds", grid$scenario, grid$b, grid$rep))
-# replicate-specific seeds so results don't depend on scheduling or restarts;
-# dlm_variants and extra_growth share seeds (and so simulated data) with main,
-# extra_level with level_truth
-grid$seed <- 20261112 + study_opts$seed_offset + seq_len(nrow(grid))
+grid$seed <- grid_seed(seq_len(nrow(grid)), study_opts$seed_offset)
 todo <- which(!file.exists(grid$file))
 cat("Study:", study, " replicates:", nrow(grid), " remaining:", length(todo), "\n")
 
@@ -60,7 +51,7 @@ invisible(future_lapply(todo, function(i) {
   t_start <- Sys.time()
   r <- tryCatch(run_replicate(setup, g$scenario, g$b, g$rep, truth = study_opts$truth,
                               main = study_opts$main, variants = study_opts$variants,
-                              extra = study_opts$extra),
+                              checks = study_opts$checks),
                 error = function(e) list(error = conditionMessage(e)))
   secs <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
   if (!is.null(r$summary)) r$summary$secs <- secs
@@ -82,7 +73,7 @@ bind <- function(part) {
 }
 # Compact, committed results (output/results/<study>_*.csv): replicate-level
 # summaries, plus slope paths reduced to quantiles across replicates. The
-# summary scripts (04-06) read only these, so they run without the checkpoints.
+# summary scripts read only these, so they run without the checkpoints.
 results_dir <- file.path("output", "results")
 dir.create(results_dir, showWarnings = FALSE)
 write_result <- function(df, name) {
