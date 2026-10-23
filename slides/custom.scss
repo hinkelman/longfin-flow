@@ -1,0 +1,44 @@
+/*-- scss:defaults --*/
+$presentation-heading-font-weight: 600;
+$link-color: #2a78d6;
+$presentation-heading-color: #1d1d1b;
+$code-block-font-size: 0.62em;
+
+/*-- scss:rules --*/
+.reveal .slide-number {
+  font-size: 0.5em;
+}
+
+.reveal .footer {
+  font-size: 0.45em;
+  color: #6b6a66;
+}
+
+.reveal table {
+  font-size: 0.8em;
+}
+
+.reveal blockquote {
+  width: 90%;
+  font-style: normal;
+  border-left: 4px solid #2a78d6;
+  box-shadow: none;
+  background: #f4f6fa;
+  color: #1d1d1b;
+}
+
+.reveal img {
+  max-height: 560px;
+}
+
+/* directory tree on the repo slide: compact, no scroll box */
+.reveal pre.tree {
+  max-height: none;
+  box-shadow: none;
+}
+.reveal pre.tree code {
+  font-size: 1em;
+  line-height: 1.3;
+  max-height: none;
+  overflow: visible;
+}

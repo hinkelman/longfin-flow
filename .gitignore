@@ -57,3 +57,7 @@ output/original_run/
 output/sim_reps/
 output/*.rds
 output/*.log
+
+# Rendered Quarto slides (rebuild with: quarto render slides/longfin-flow.qmd)
+slides/*.html
+slides/*_files/
