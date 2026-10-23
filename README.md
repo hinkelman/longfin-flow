@@ -33,31 +33,52 @@ changes a file, the script flags the mismatch.
 | `R/01_replication_check.R` | Compares rerun to published coefficients; DLM variance diagnostics |
 | `R/02_sim_setup.R` | Pulls the age-0 station layout, missing-data pattern, and fitted variances from the authors' pipeline |
 | `R/sim_functions.R` | Data simulation and model-fitting functions |
-| `R/03_run_simulation.R` | Runs a simulation study in parallel (checkpointed, resumable): `main`, `dlm_variants`, or `level_truth` |
-| `R/04_summarize_simulation.R` | Recovery tables and figures |
+| `R/03_run_simulation.R` | Runs one simulation study in parallel (checkpointed, resumable); see the study list below |
+| `R/04_summarize_simulation.R` | Recovery tables and figures (study `main`) |
 | `R/05_followup_checks.R` | What static MARSS C averages over; era-model false positives and calibrated threshold |
-| `R/06_summarize_extensions.R` | Why the DLM shrinks the flow effect (DLM variants); results when the DLM's own model is the truth |
-| `output/` | Result tables (`*.csv`) and figures (`figures/`); model objects and checkpoints are not tracked |
+| `R/06_summarize_extensions.R` | Why the DLM shrinks the flow effect; results when the DLM's own model is the truth |
+| `R/07_real_data.R` | Fits every model form (growth vs level, static, era, time-varying) to the real age-0 and age-1+ data |
+| `R/08_summarize_checks.R` | Can AICc tell growth from level? Does a prior on x0 fix the slope intervals? |
+| `output/results/` | Replicate-level simulation results and slope-path quantiles (the summary scripts read only these) |
+| `output/` | Summary tables (`*.csv`) and figures (`figures/`); model objects and checkpoints are not tracked |
+
+Simulation studies (`Rscript R/03_run_simulation.R <n_reps> <n_workers> <study>`):
+
+| Study | Truth | What it fits | Hours on 7 cores |
+|---|---|---|---|
+| `main` | flow drives growth | paper's MARSS C, paper's DLM, era model | 1.5 |
+| `dlm_variants` | growth (same data as `main`) | DLM variants changing one choice at a time | 1.7 |
+| `level_truth` | flow drives level | everything in `main` and `dlm_variants` | 2.5 |
+| `extra_growth` | growth (same data as `main`) | growth vs level structure; interval checks | 1.8 |
+| `extra_level` | level (same data as `level_truth`) | growth vs level structure; interval checks | ~2 |
 
 ## Reproduce
 
-Requires R (tested on 4.6.1) with `MARSS` (3.11.10), `tidyverse`, `viridis`, `zoo`, `future.apply`.
+Requires R 4.6.1; package versions are pinned in `renv.lock`. Run `renv::restore()` once to install them.
+
+To regenerate the tables and figures from the committed simulation results (minutes):
 
 ```bash
 Rscript R/fetch_original.R
 for i in 1 2 3 4; do Rscript R/00_run_original.R $i; done
 Rscript R/01_replication_check.R
 Rscript R/02_sim_setup.R
-Rscript R/03_run_simulation.R 100 7 main
 Rscript R/04_summarize_simulation.R
-Rscript R/03_run_simulation.R 100 7 dlm_variants
-Rscript R/03_run_simulation.R 100 7 level_truth
 Rscript R/05_followup_checks.R
 Rscript R/06_summarize_extensions.R
+Rscript R/07_real_data.R
+Rscript R/08_summarize_checks.R
 ```
 
-Each study has 900 replicates. On 7 cores, `main` takes about 1.5 hours, `dlm_variants` about 1.7, and
-`level_truth` about 2.5. Each replicate is seeded on its own and checkpointed to
-`output/sim_reps/<study>/`, so an interrupted run picks up where it stopped. `dlm_variants` uses the same
-seeds as `main`, so both studies fit models to identical simulated data. `05_followup_checks.R` pools the
-null replicates of `main` and `level_truth`, so it runs after both.
+To rerun the simulations themselves (about 9.5 hours on 7 cores), run the studies before the summary
+scripts:
+
+```bash
+for s in main dlm_variants level_truth extra_growth extra_level; do Rscript R/03_run_simulation.R 100 7 $s; done
+```
+
+Each replicate is seeded on its own and checkpointed to `output/sim_reps/<study>/`, so an interrupted run
+picks up where it stopped. Studies on the same truth share seeds, so they fit models to identical
+simulated data. Each study writes its compact results to `output/results/<study>_*.csv`.
+`05_followup_checks.R` refits a few null replicates, so it needs `output/sim_setup.rds` from
+`02_sim_setup.R`.

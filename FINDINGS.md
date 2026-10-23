@@ -157,8 +157,8 @@ Takeaways:
    "q_slope > 0" is not a calibrated test, just like ΔAICc < −2 for the era model.
 4. **Overconfident intervals are a MARSS state-SE issue, not just the paper's.** Even variants C–E cover
    the true effect in only 9–13% of years when the true effect is constant. When the slope variance
-   collapses to 0, the slope becomes a constant whose SE comes from treating x0 as known.
-   Constant-effect intervals need the parameter SE (e.g., `MARSSparamCIs`) instead.
+   collapses to 0, the slope becomes a constant whose SE comes from treating x0 as known. Section 7
+   shows a fix: a prior on x0.
 
 ## 5. When the DLM's own model is the truth
 
@@ -194,16 +194,118 @@ Takeaways:
 4. **At the realistic effect size, detection is weak whichever structure is true.** The best usable
    method flags real changes in under a fifth of fits at b = 0.08.
 
-**Implication for the real data:** the level-vs-growth question can be tested directly. Fit the static
-flow effect both ways to the station data: in the process equation (C, as the paper did) and as a
-covariate on the observations (the D matrix in MARSS). Then compare AICc. Not done here; it is a natural
-next step.
+**Implication for the real data:** the level-vs-growth question can be tested directly by fitting the
+flow effect both ways and comparing AICc. Section 6 checks that this works on simulated data; section 8
+applies it to the real data.
 
-## 6. Caveats
+## 6. Can AICc tell whether flow drives growth or level?
+
+Studies `extra_growth` and `extra_level` refit the main and level-truth data (same seeds). Each fit puts
+a static flow effect in the process equation (C, growth) and, separately, on the observations (D,
+level), plus the era version of each. Both forms have the same number of parameters, so the comparison
+is a straight likelihood comparison. Tables: `output/check_structure.csv`; figure: `check_structure.png`.
+
+| Truth | Scenario | Correct structure preferred (ΔAICc > 2) | Wrong structure preferred |
+|---|---|---|---|
+| Growth | Constant (b = 0.08 / 0.24) | 99% / 100% | 0% / 0% |
+| Growth | Decline or steps, b = 0.08 | 48–94% | 1–21% |
+| Growth | Decline or steps, b = 0.24 | 85–100% | 0–3% |
+| Level | Constant (b = 0.08 / 0.24) | 99% / 100% | 1% / 0% |
+| Level | Decline or steps, b = 0.08 | 63–82% | 5–15% |
+| Level | Decline or steps, b = 0.24 | 98–100% | 0–1% |
+| Either | Null | (no right answer) | growth 30–46%, level 19–33% |
+
+Takeaways:
+
+1. **Yes, when there is a flow effect.** For a constant effect of realistic size, AICc picks the true
+   structure in 99% of replicates and the wrong one in at most 1%. With no flow effect, it picks either
+   structure about as often, as it should.
+2. **The static estimate in the right structure is trustworthy.** Under level truth, the static D's 95%
+   intervals cover the true average effect in 88–94% of replicates (65% for the strong 1987 step,
+   because of the flow weighting in section 3).
+3. **The era test works much better in the level form.** Calibrated on the 200 pooled nulls, the level
+   form needs only ΔAICc < −1.61 for 5% false positives (vs −6.37 in the growth form). Under level
+   truth it catches strong steps and the strong decline in 96–100% of fits, and realistic ones in
+   18–48%.
+
+## 7. Honest intervals for time-varying effects
+
+Same studies. The one-stage time-varying model is fit in the structure matching the truth in two ways:
+with x0 estimated (as in sections 4–5), and with a prior on x0. The prior is centred on the stage-1
+estimates for abundance and on 0 for the flow effect, with variance 1 on both. The paper's DLM is also
+refit with a prior. Table: `output/check_intervals.csv`; figure: `check_intervals.png`.
+
+| Method | 95% interval coverage of the true effect (share of years) |
+|---|---|
+| One-stage, x0 estimated | 9–76% |
+| One-stage, prior on x0 | **82–96%** |
+| Paper DLM, prior on x0 | 0–99% (still biased; see section 4) |
+
+Takeaways:
+
+1. **A prior on x0 fixes the intervals.** Treating x0 as an estimated constant makes MARSS report
+   state SEs as if x0 were known. With a prior, the SEs include that uncertainty. Coverage rises to
+   82–96% under both truths, close to the 95% target. Point estimates barely move (ratios to truth
+   within 0.07 of the x0-estimated fits), except for the 1987 step, where the prior moves them up to
+   0.17 closer to the truth.
+2. **It doesn't rescue the paper's DLM.** Its slopes are still biased by the two-stage design, so wider
+   intervals cover the truth only when the bias happens to be small.
+3. **"Slope variance > 0" is still not a test for change.** With the prior it fires even more often
+   (33–42% of fits under a constant effect). Decide whether an effect changed with a calibrated
+   comparison (e.g., the era test), not from the fitted slope variance.
+
+## 8. What the real data say
+
+`R/07_real_data.R` fits every model form to the real station data (the authors' stations, habitat
+grouping, and observation-variance structure), for age-0 and age-1+ with same-year Jan–Jun outflow.
+Tables: `output/real_data_model_comparison.csv`, `output/real_data_flow_effects.csv`; figure:
+`real_data_tv_slopes.png`.
+
+| Model | Age-0 ΔAICc | Age-1+ ΔAICc |
+|---|---|---|
+| No flow effect | 34.7 | 6.1 |
+| Static, growth (C; the paper's MARSS) | 35.6 | 4.4 |
+| **Static, level (D)** | **0** | 5.0 |
+| Era, growth | 47.0 | 4.5 |
+| Era, level | 5.0 | 3.4 |
+| Time-varying, growth | 36.6 | 6.6 |
+| Time-varying, level | 1.7 | **0** |
+
+Takeaways:
+
+1. **Age-0: flow acts on the level, not the growth, and the effect is positive everywhere.**
+   - The level form beats the growth form by 35.6 AICc units. By section 6, a gap of that size almost
+     never points to the wrong structure.
+   - The growth form, which the paper's MARSS used, is no better than having no flow effect at all
+     (ΔAICc +0.9).
+   - Static level effects, per SD of Jan–Jun outflow (95% CI): channel midwater 0.105 (0.053–0.158),
+     shoal midwater 0.109 (0.055–0.163), shoal otter trawl 0.082 (0.040–0.124), channel otter trawl
+     0.049 (−0.005–0.104). An effect of 0.1 means about 11% higher CPUE in a year with 1 SD more
+     outflow.
+2. **Age-0: no evidence that the flow effect changed over time.**
+   - The era level model is 5.0 AICc units *worse* than the static level model, far from the calibrated
+     threshold of −1.61.
+   - The time-varying level model is 1.7 worse. Its slopes drift gently downward in the shoal habitats
+     (the paper's "weakening"), but the 95% bands overlap a constant line throughout
+     (`real_data_tv_slopes.png`).
+3. **Age-1+: the data can't distinguish the models.** All seven fall within 6.6 AICc units.
+   - Growth and level static effects are within 0.7 units of each other.
+   - Era level vs static level is −1.6, right at the calibrated threshold: borderline at best.
+   - The time-varying level model ranks first, but no calibration exists for that comparison.
+
+**For the talk:** with a structure the data support, age-0 Longfin Smelt show a clear, positive flow
+effect in all four habitats, and no detectable change in it since 1980. The paper's "weakening"
+conclusion comes from a two-stage DLM whose estimates are attenuated and whose intervals are too
+narrow; its time-averaged MARSS used the growth structure, which the age-0 data reject.
+
+## 9. Caveats
 
 - Both truths are idealized. Real flow effects could act on both level and growth, lag across years,
   or differ by habitat.
 - Era breakpoints are given to the era model, not estimated, so it is an "oracle" for the step scenarios.
 - Calibrated thresholds come from 200 simulated nulls and carry their own uncertainty (section 3).
+- The real-data analysis uses the authors' processed station data and covariate as published. The
+  lagged-flow age-1+ analysis was not refit.
+- The prior on x0 (variance 1) was checked only at that setting.
 - The EM algorithm hit its iteration limit in 4% of era fits and 0.3% of static C fits. Those fits are
   included as estimated.

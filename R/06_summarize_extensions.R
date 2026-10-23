@@ -40,8 +40,9 @@ summarize_variants <- function(v) {
 }
 
 # Study 1: decomposing the DLM's shrinkage ---------------------------------------------
-dv <- readRDS(file.path("output", "sim_results_dlm_variants.rds"))
-tab_variants <- summarize_variants(dv$variants)
+results_dir <- file.path("output", "results")
+dv <- read.csv(file.path(results_dir, "dlm_variants_variants.csv"))
+tab_variants <- summarize_variants(dv)
 write.csv(tab_variants, file.path("output", "ext_dlm_variants.csv"), row.names = FALSE)
 cat("DLM variants, truth = growth (the paper's MARSS model):\n")
 print(as.data.frame(tab_variants |> select(scenario, b, variant, ratio_to_truth, true_change,
@@ -52,8 +53,7 @@ paths_fig <- function(paths, b_val, title, subtitle) {
   med <- paths |>
     filter(b == b_val) |>
     mutate(scenario = factor(scenario, names(scenario_labels))) |>
-    group_by(scenario, variant, year) |>
-    summarize(true_beta = first(true_beta), slope = median(slope), .groups = "drop")
+    rename(slope = median)
   truth <- distinct(med, scenario, year, true_beta)
   ggplot(med, aes(year)) +
     geom_hline(yintercept = 0, colour = "grey80", linewidth = 0.4) +
@@ -70,7 +70,8 @@ paths_fig <- function(paths, b_val, title, subtitle) {
           plot.title.position = "plot")
 }
 ggsave(file.path("output", "figures", "ext_dlm_variants_b024.png"),
-       paths_fig(filter(dv$variant_paths, scenario != "null"), 0.24,
+       paths_fig(filter(read.csv(file.path(results_dir, "dlm_variants_variant_path_quantiles.csv")),
+                        scenario != "null"), 0.24,
                  "Which modeling choice shrinks the DLM's flow effect? (starting effect b = 0.24)",
                  "Median slope over 100 replicates x 4 states; black = true effect. B-D use the simulated true states (diagnostic only)"),
        width = 13, height = 5, dpi = 200, bg = "white")
@@ -93,8 +94,7 @@ ggsave(file.path("output", "figures", "ext_dlm_variants_ratio.png"), ratio_plot,
        width = 11, height = 5.5, dpi = 200, bg = "white")
 
 # Study 2: the DLM's own model as truth -------------------------------------------------
-lt <- readRDS(file.path("output", "sim_results_level_truth.rds"))
-s <- lt$summary |> mutate(scenario = factor(scenario, names(scenario_labels)),
+s <- read.csv(file.path(results_dir, "level_truth_summary.csv")) |> mutate(scenario = factor(scenario, names(scenario_labels)),
                           dlm_tv = dlm_q_slope > 1e-8,
                           marss_lo = marss_C - 1.96 * marss_se,
                           marss_hi = marss_C + 1.96 * marss_se)
@@ -121,7 +121,7 @@ cat("\nTruth = level (the paper's DLM model): main methods\n")
 cat("Pooled null-calibrated era threshold: dAICc <", round(threshold, 2), "\n")
 print(as.data.frame(tab_level), digits = 2)
 
-tab_level_variants <- summarize_variants(lt$variants)
+tab_level_variants <- summarize_variants(read.csv(file.path(results_dir, "level_truth_variants.csv")))
 write.csv(tab_level_variants, file.path("output", "ext_level_truth_variants.csv"), row.names = FALSE)
 cat("\nTruth = level: DLM variants\n")
 print(as.data.frame(tab_level_variants |> select(scenario, b, variant, ratio_to_truth, true_change,
@@ -129,7 +129,8 @@ print(as.data.frame(tab_level_variants |> select(scenario, b, variant, ratio_to_
       digits = 2)
 
 ggsave(file.path("output", "figures", "ext_level_truth_variants_b024.png"),
-       paths_fig(filter(lt$variant_paths, scenario != "null"), 0.24,
+       paths_fig(filter(read.csv(file.path(results_dir, "level_truth_variant_path_quantiles.csv")),
+                        scenario != "null"), 0.24,
                  "When flow drives the level (the DLM's own model), starting effect b = 0.24",
                  "Median slope over 100 replicates x 4 states; black = true effect. B-D use the simulated true states (diagnostic only)"),
        width = 13, height = 5, dpi = 200, bg = "white")

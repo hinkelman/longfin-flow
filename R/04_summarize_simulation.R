@@ -6,7 +6,7 @@ suppressMessages({
   library(ggplot2)
 })
 
-res <- readRDS(file.path("output", "sim_results.rds"))
+results_dir <- file.path("output", "results")
 dir.create(file.path("output", "figures"), showWarnings = FALSE)
 
 scenario_labels <- c(null = "Null (no effect)", constant = "Constant",
@@ -17,7 +17,7 @@ col_marss <- "#2a78d6"
 col_dlm <- "#eb6834"
 col_era <- "#1baf7a"
 
-s <- res$summary |>
+s <- read.csv(file.path(results_dir, "main_summary.csv")) |>
   mutate(scenario = factor(scenario, names(scenario_labels)),
          marss_lo = marss_C - 1.96 * marss_se,
          marss_hi = marss_C + 1.96 * marss_se,
@@ -68,12 +68,9 @@ print(as.data.frame(recovery |> select(scenario, b, true_mean, marss_C_mean, mar
 cat("\nEra estimates vs truth:\n"); print(as.data.frame(tab_era), digits = 2)
 
 # Figure 1: what each method recovers over time ----------------------------------
-paths <- res$paths |> mutate(scenario = factor(scenario, names(scenario_labels)))
-dlm_band <- paths |>
-  group_by(scenario, b, year) |>
-  summarize(true_beta = first(true_beta),
-            lo = quantile(dlm_slope, 0.1), mid = median(dlm_slope), hi = quantile(dlm_slope, 0.9),
-            .groups = "drop")
+dlm_band <- read.csv(file.path(results_dir, "main_dlm_path_quantiles.csv")) |>
+  mutate(scenario = factor(scenario, names(scenario_labels))) |>
+  rename(lo = q10, mid = median, hi = q90)
 
 marss_line <- s |> group_by(scenario, b) |>
   summarize(marss_mid = median(marss_C), .groups = "drop")

@@ -7,7 +7,7 @@
 
 source("R/sim_functions.R")
 setup <- readRDS(file.path("output", "sim_setup.rds"))
-s <- readRDS(file.path("output", "sim_results.rds"))$summary
+s <- read.csv(file.path("output", "results", "main_summary.csv"))
 yrs <- setup$years
 
 # 1. MARSS C as a weighted average ---------------------------------------------------
@@ -75,7 +75,7 @@ cat("Expected share of nulls with LR >", round(min(refits$LR), 1), "under chi2_8
 # With beta = 0 the growth and level truths are the same process, so the null
 # replicates of the main and level_truth studies are 200 draws from one null
 # distribution. A 5th percentile from 100 draws alone is too noisy (-7.45 vs -3.21).
-level <- readRDS(file.path("output", "sim_results_level_truth.rds"))$summary
+level <- read.csv(file.path("output", "results", "level_truth_summary.csv"))
 null_level <- unique(level[level$scenario == "null", c("rep", "dAICc_era")])
 null_pooled <- c(null_reps$dAICc_era, null_level$dAICc_era)
 threshold <- unname(quantile(null_pooled, 0.05))
