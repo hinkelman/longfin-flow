@@ -1,5 +1,5 @@
 # Compare our rerun of the authors' scripts (R/00_run_original.R 1-4) with the
-# published outputs on Dryad, and pull out DLM diagnostics used in the talk.
+# published outputs on Dryad, and pull out DLM diagnostics.
 # Run from the project root after R/00_run_original.R has been run for 1-4.
 
 suppressMessages({

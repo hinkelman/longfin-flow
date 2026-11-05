@@ -1,7 +1,11 @@
 # longfin-flow
 
 **Static or shifting? Stress-testing time-varying flow–ecology models.**
-Material for the IEP Data Science PWT meeting, 12 November 2026.
+
+> **Status: AI-assisted exploration, not yet reviewed.** The code, simulations, and write-up in this
+> repository were produced largely through an exploratory analysis with an AI coding assistant
+> (Claude). They have not been checked line by line by a human, and the findings have not been peer
+> reviewed. Treat the results as preliminary until someone has reviewed the code and reasoning.
 
 This project (1) reruns the analysis in Saffarinia et al. (2026, *Ecological Applications* 36:e70178,
 <https://doi.org/10.1002/eap.70178>) using the authors' published code and data, and (2) simulates

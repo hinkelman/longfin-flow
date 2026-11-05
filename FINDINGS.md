@@ -1,7 +1,8 @@
 # Findings: Static or shifting? Stress-testing time-varying flow–ecology models
 
-Working notes for the 12 November 2026 Data Science PWT talk. All numbers come from the scripts in `R/`;
-tables are in `output/`, figures in `output/figures/`.
+Working notes from an AI-assisted exploration (with Claude). All numbers come from the scripts in `R/`;
+tables are in `output/`, figures in `output/figures/`. These notes have not yet had human review: check
+the code and reasoning before relying on any conclusion here.
 
 ## 1. Replication of Saffarinia et al. (2026)
 
@@ -308,8 +309,8 @@ Takeaways:
      threshold was calibrated on the age-0 setup, so it is only a rough guide for age-1+.)
    - The time-varying level model ranks first, but no calibration exists for that comparison.
 
-**For the talk:** with a structure the data support, age-0 Longfin Smelt show a positive flow effect
-in all four habitats (clearly so in three), and no detectable change in it since 1980. The paper's "weakening"
+**Bottom line (preliminary):** with a structure the data support, age-0 Longfin Smelt show a positive
+flow effect in all four habitats (clearly so in three), and no detectable change in it since 1980. The paper's "weakening"
 conclusion comes from a two-stage DLM whose estimates are attenuated and whose intervals are too
 narrow; its time-averaged MARSS used the growth structure, which the age-0 data reject.
 

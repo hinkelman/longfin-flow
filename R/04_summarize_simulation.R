@@ -1,4 +1,4 @@
-# Summarize the simulation study: recovery tables and figures for the talk.
+# Summarize the simulation study: recovery tables and figures.
 
 suppressMessages(library(tidyr))
 source("R/plot_helpers.R")
